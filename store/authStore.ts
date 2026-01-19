@@ -200,18 +200,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const docSnap = await getDoc(doc(db, 'users', user.uid));
       if (docSnap.exists()) {
         const data = docSnap.data();
+        
+        // 닉네임은 있는 그대로 반환 (null, undefined, 또는 실제 값)
+        const nickname = data.nickname !== undefined && data.nickname !== null && data.nickname !== '' 
+          ? data.nickname 
+          : null;
+        
         console.log('[Firebase] Loaded game data:', { 
           gameTick: data.gameTick, 
           currentDay: data.currentDay,
-          nickname: data.nickname,
+          nickname: nickname,
+          rawNickname: data.nickname,
           cash: data.cash 
         });
+        
         return {
           cash: data.cash,
           portfolio: data.portfolio || [],
           gameTick: data.gameTick || 0,
           currentDay: data.currentDay || 1,
-          nickname: data.nickname || null,
+          nickname: nickname,
           nicknameLastChanged: data.nicknameLastChanged?.toDate() || null,
           totalAsset: data.totalAsset || data.cash || 0,
           lastUpdated: data.lastUpdated?.toDate() || null

@@ -157,17 +157,24 @@ const App: React.FC = () => {
             cash: data.cash, 
             gameTick: data.gameTick, 
             nickname: data.nickname,
+            nicknameType: typeof data.nickname,
             portfolioCount: data.portfolio?.length || 0
           });
           loadFromFirebase(data.cash, data.portfolio, data.gameTick);
           
           // 신규 가입자 또는 닉네임이 없으면 닉네임 설정 모달 표시
-          if (!data.nickname) {
+          // nickname이 null, undefined, 또는 빈 문자열인 경우에만 모달 표시
+          const hasNickname = data.nickname && typeof data.nickname === 'string' && data.nickname.trim().length > 0;
+          console.log('[App] Has nickname:', hasNickname, 'Value:', data.nickname);
+          
+          if (!hasNickname) {
             console.log('[App] No nickname found, showing modal');
             setShowNicknameModal(true);
           }
         } else {
           console.log('[App] No data found in Firebase, using defaults');
+          // 데이터가 없는 경우도 닉네임 설정 필요
+          setShowNicknameModal(true);
         }
         
         // Firebase에서 주가 로드
