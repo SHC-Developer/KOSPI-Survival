@@ -14,9 +14,10 @@ const THEME_TICK_CAP = 0.08;
 const DAILY_UPPER_LIMIT = 1.30;
 const DAILY_LOWER_LIMIT = 0.70;
 
-// 48초 동안 1초마다 업데이트, 10초 갭 (총 58초, 2초 버퍼)
-const UPDATE_DURATION = 48;
-const NEWS_GAP_DURATION = 10;
+// 50초 동안 1초마다 업데이트, 9초 뉴스 갭 (총 59초, 1초 버퍼)
+// Cloud Scheduler가 정확히 60초에 다시 트리거하므로 1초 여유 필요
+const UPDATE_DURATION = 50;
+const NEWS_GAP_DURATION = 9;
 
 // 종목 설정 (4개: 대형주 2개 + 작전주 2개)
 const STOCK_CONFIGS = [
@@ -184,7 +185,7 @@ function applyNewsJump(stock, jumpPercent) {
 // 유틸: sleep 함수
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 1분마다 주가 업데이트 (Cloud Scheduler) - 48초 업데이트 + 10초 뉴스 갭 = 58초 (2초 버퍼)
+// 1분마다 주가 업데이트 (Cloud Scheduler) - 50초 업데이트 + 9초 뉴스 갭 = 59초 (1초 버퍼)
 exports.updateStockPrices = onSchedule({
   schedule: "* * * * *",
   timeZone: "Asia/Seoul",
@@ -278,9 +279,10 @@ exports.updateStockPrices = onSchedule({
       }
     }
     
-    // Phase 2: 10초 뉴스 갭 (48초 지점부터 시작)
-    const newsPhaseStartTime = cycleStartTime + (UPDATE_DURATION * 1000); // 48초 시점
-    console.log('Starting news phase...');
+    // Phase 2: 9초 뉴스 갭 (50초 지점부터 시작)
+    const newsPhaseStartTime = cycleStartTime + (UPDATE_DURATION * 1000); // 50초 시점
+    const elapsedBeforeNews = Date.now() - cycleStartTime;
+    console.log(`Starting news phase at ${elapsedBeforeNews}ms`);
     
     // 4개 종목 중 1~3개에 뉴스 발생
     const newsStockCount = Math.floor(Math.random() * 3) + 1;
@@ -292,25 +294,25 @@ exports.updateStockPrices = onSchedule({
       return generateNewsEvent(stock, config, gameTick, currentDay);
     });
     
-    // 뉴스 이벤트 저장
-    await db.doc('game/newsEvents').set({
-      events: newsEvents,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    });
+    // 뉴스 이벤트 저장 + 뉴스 페이즈 시작 (병렬 처리로 시간 단축)
+    await Promise.all([
+      db.doc('game/newsEvents').set({
+        events: newsEvents,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      }),
+      db.doc('game/stockPrices').update({
+        isNewsPhase: true,
+        newsPhaseCountdown: NEWS_GAP_DURATION,
+        newsWarningActive: true,
+      })
+    ]);
     
-    // 3초 경고 시간 (48초~51초)
-    await db.doc('game/stockPrices').update({
-      isNewsPhase: true,
-      newsPhaseCountdown: 10,
-      newsWarningActive: true,
-    });
-    
-    // 51초 시점까지 대기
+    // 3초 경고 시간 (50초~53초)
     const warningEndTime = newsPhaseStartTime + 3000;
     let waitTime = Math.max(0, warningEndTime - Date.now());
     if (waitTime > 0) await sleep(waitTime);
     
-    // 뉴스 경고 해제 + 뉴스 점프 적용 (51초~58초)
+    // 뉴스 경고 해제 + 뉴스 점프 적용 (53초 시점)
     newsEvents.forEach(news => {
       const config = STOCK_CONFIGS.find(c => c.id === news.targetStockId);
       if (config) {
@@ -328,25 +330,18 @@ exports.updateStockPrices = onSchedule({
       gameTick,
       currentDay,
       isNewsPhase: true,
-      newsPhaseCountdown: 7,
+      newsPhaseCountdown: 6,
       newsWarningActive: false,
       lastUpdated: admin.firestore.FieldValue.serverTimestamp()
     });
     
-    // 7초 카운트다운 (51초~58초)
-    for (let i = 6; i >= 0; i--) {
-      const targetTime = newsPhaseStartTime + 3000 + (7 - i) * 1000;
-      waitTime = Math.max(0, targetTime - Date.now());
-      if (waitTime > 0) await sleep(waitTime);
-      
-      if (i > 0) {
-        await db.doc('game/stockPrices').update({
-          newsPhaseCountdown: i,
-        });
-      }
-    }
+    // 6초 대기 후 뉴스 페이즈 종료 (53초~59초)
+    // Firebase 쓰기 최소화: 카운트다운 업데이트 없이 대기만
+    const cycleEndTime = cycleStartTime + 59000; // 59초에 종료
+    waitTime = Math.max(0, cycleEndTime - Date.now());
+    if (waitTime > 0) await sleep(waitTime);
     
-    // 뉴스 페이즈 종료 (58초 시점)
+    // 뉴스 페이즈 종료 (59초 시점)
     await db.doc('game/stockPrices').update({
       isNewsPhase: false,
       newsPhaseCountdown: 0,
@@ -355,7 +350,7 @@ exports.updateStockPrices = onSchedule({
     const totalElapsed = Date.now() - cycleStartTime;
     console.log(`Cycle completed. Day ${currentDay}, Tick ${gameTick}, Duration: ${totalElapsed}ms`);
     
-    // 함수가 58초에 끝나면 다음 분까지 2초 대기
+    // 함수가 59초에 끝나면 다음 분까지 1초 대기
     // Cloud Scheduler가 다음 분에 다시 트리거
   } catch (error) {
     console.error('Error updating stock prices:', error);
