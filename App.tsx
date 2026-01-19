@@ -115,9 +115,6 @@ const App: React.FC = () => {
     latestNews,
     clearLatestNews,
     setPage,
-    isNewsPhase,
-    newsPhaseCountdown,
-    newsWarningActive,
     isMarketClosed,
     marketClosingMessage,
     dayProgress
@@ -439,37 +436,8 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 뉴스 경고 팝업 (3초) */}
-      {newsWarningActive && !isMarketClosed && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="text-center animate-pulse">
-            <div className="text-6xl mb-6">📰</div>
-            <h2 className="text-2xl font-bold text-yellow-400 mb-3">
-              잠시 거래를 멈추고
-            </h2>
-            <h2 className="text-2xl font-bold text-yellow-400 mb-6">
-              뉴스에 집중해주세요
-            </h2>
-            <div className="text-gray-400 text-sm">
-              곧 중요한 뉴스가 발표됩니다...
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 뉴스 페이즈 카운트다운 */}
-      {isNewsPhase && !newsWarningActive && newsPhaseCountdown > 0 && (
-        <div className="fixed top-14 left-0 right-0 z-[55] flex justify-center px-4">
-          <div className="bg-gradient-to-r from-purple-900/95 to-indigo-900/95 border border-purple-600 rounded-lg px-4 py-2 shadow-xl">
-            <span className="text-purple-300 text-sm font-medium">
-              📰 뉴스 타임 - {newsPhaseCountdown}초 후 거래 재개
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* 뉴스 팝업 */}
-      {showNewsPopup && !newsWarningActive && (
+      {/* 뉴스 팝업 (상단에 알림 형태로 표시) */}
+      {showNewsPopup && (
         <NewsPopup news={showNewsPopup} onClose={handleCloseNewsPopup} />
       )}
       

@@ -254,8 +254,6 @@ exports.updateStockPrices = onSchedule({
       gameTick,
       currentDay,
       isMarketClosed: false,
-      isNewsPhase: false,
-      newsPhaseCountdown: 0,
       marketClosingMessage: null,
       lastUpdated: admin.firestore.FieldValue.serverTimestamp()
     });
@@ -264,11 +262,10 @@ exports.updateStockPrices = onSchedule({
     for (let tick = 0; tick < MARKET_DURATION; tick++) {
       const targetTime = cycleStartTime + (tick * 1000);
       
-      // 뉴스 이벤트 체크 (1분마다)
+      // 뉴스 이벤트 체크 (1분마다) - 주가 업데이트는 멈추지 않고 팝업만 표시
       const isNewsTime = tick > 0 && tick % NEWS_INTERVAL === 0;
       
       if (isNewsTime) {
-        // 뉴스 페이즈 시작
         console.log(`News event at tick ${tick}`);
         
         // 4개 종목 중 1~2개에 뉴스 발생
@@ -281,22 +278,13 @@ exports.updateStockPrices = onSchedule({
           return generateNewsEvent(stock, config, gameTick, currentDay);
         });
         
-        // 뉴스 저장
+        // 뉴스 저장 (클라이언트에서 팝업으로 표시)
         await db.doc('game/newsEvents').set({
           events: newsEvents,
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
-        // 뉴스 경고 (3초)
-        await db.doc('game/stockPrices').update({
-          isNewsPhase: true,
-          newsPhaseCountdown: 10,
-          newsWarningActive: true,
-        });
-        
-        await sleep(3000);
-        
-        // 뉴스 점프 적용
+        // 뉴스 점프 즉시 적용 (대기 없음)
         newsEvents.forEach(news => {
           const config = STOCK_CONFIGS.find(c => c.id === news.targetStockId);
           if (config) {
@@ -308,32 +296,9 @@ exports.updateStockPrices = onSchedule({
             };
           }
         });
-        
-        await db.doc('game/stockPrices').set({
-          prices,
-          gameTick,
-          currentDay,
-          isMarketClosed: false,
-          isNewsPhase: true,
-          newsPhaseCountdown: 7,
-          newsWarningActive: false,
-          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
-        });
-        
-        // 7초 대기
-        await sleep(7000);
-        
-        // 뉴스 페이즈 종료
-        await db.doc('game/stockPrices').update({
-          isNewsPhase: false,
-          newsPhaseCountdown: 0,
-        });
-        
-        // 뉴스 시간 보정 (10초 소요)
-        continue;
       }
       
-      // 주가 업데이트
+      // 주가 업데이트 (뉴스 발생 여부와 관계없이 항상 실행)
       STOCK_CONFIGS.forEach(config => {
         const stock = prices[config.id];
         const newPrice = updatePriceOU(stock, config);
@@ -359,8 +324,6 @@ exports.updateStockPrices = onSchedule({
         gameTick,
         currentDay,
         isMarketClosed: false,
-        isNewsPhase: false,
-        newsPhaseCountdown: 0,
         dayProgress: Math.round((tick / MARKET_DURATION) * 100), // 진행률 (%)
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
@@ -383,8 +346,6 @@ exports.updateStockPrices = onSchedule({
       gameTick,
       currentDay,
       isMarketClosed: true,
-      isNewsPhase: false,
-      newsPhaseCountdown: 0,
       marketClosingMessage: "📢 장이 마감되었습니다. 약 1~3분 이후 다음 장이 개장합니다.",
       dayProgress: 100,
       lastUpdated: admin.firestore.FieldValue.serverTimestamp()
@@ -442,9 +403,8 @@ exports.toggleServer = onCall({
         prices: getInitialPrices(),
         gameTick: 0,
         currentDay: 1,
-        isNewsPhase: false,
-        newsPhaseCountdown: 0,
-        newsWarningActive: false,
+        isMarketClosed: false,
+        dayProgress: 0,
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
     }
@@ -491,9 +451,8 @@ exports.initializeServer = onCall({
     prices: getInitialPrices(),
     gameTick: 0,
     currentDay: 1,
-    isNewsPhase: false,
-    newsPhaseCountdown: 0,
-    newsWarningActive: false,
+    isMarketClosed: false,
+    dayProgress: 0,
     lastUpdated: admin.firestore.FieldValue.serverTimestamp()
   });
   
@@ -527,9 +486,8 @@ exports.resetStockPrices = onCall({
     prices: getInitialPrices(),
     gameTick: 0,
     currentDay: 1,
-    isNewsPhase: false,
-    newsPhaseCountdown: 0,
-    newsWarningActive: false,
+    isMarketClosed: false,
+    dayProgress: 0,
     lastUpdated: admin.firestore.FieldValue.serverTimestamp()
   });
   
