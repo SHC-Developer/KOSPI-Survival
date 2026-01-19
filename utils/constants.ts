@@ -38,7 +38,7 @@ export interface StockConfig {
 }
 
 export const STOCK_CONFIGS: StockConfig[] = [
-  // 대형주 7개 (bluechip)
+  // 대형주 2개 (bluechip)
   {
     id: '1',
     name: '삼성전자',
@@ -61,65 +61,10 @@ export const STOCK_CONFIGS: StockConfig[] = [
     sigma: 0.04,
     jumpIntensity: 0.15,
   },
+  
+  // 작전주 2개 (theme)
   {
     id: '3',
-    name: 'LG전자',
-    symbol: '066570',
-    type: 'bluechip',
-    initialPrice: 95000,
-    meanPrice: 100000,
-    kappa: 0.02,
-    sigma: 0.035,
-    jumpIntensity: 0.1,
-  },
-  {
-    id: '4',
-    name: 'NAVER',
-    symbol: '035420',
-    type: 'bluechip',
-    initialPrice: 195000,
-    meanPrice: 210000,
-    kappa: 0.03,
-    sigma: 0.045,
-    jumpIntensity: 0.2,
-  },
-  {
-    id: '5',
-    name: '카카오',
-    symbol: '035720',
-    type: 'bluechip',
-    initialPrice: 42000,
-    meanPrice: 45000,
-    kappa: 0.035,
-    sigma: 0.05,
-    jumpIntensity: 0.2,
-  },
-  {
-    id: '6',
-    name: '현대차',
-    symbol: '005380',
-    type: 'bluechip',
-    initialPrice: 245000,
-    meanPrice: 250000,
-    kappa: 0.02,
-    sigma: 0.03,
-    jumpIntensity: 0.1,
-  },
-  {
-    id: '7',
-    name: 'LG화학',
-    symbol: '051910',
-    type: 'bluechip',
-    initialPrice: 380000,
-    meanPrice: 400000,
-    kappa: 0.025,
-    sigma: 0.04,
-    jumpIntensity: 0.15,
-  },
-  
-  // 작전주 3개 (theme)
-  {
-    id: '8',
     name: '퀀텀바이오',
     symbol: '900010',
     type: 'theme',
@@ -130,7 +75,7 @@ export const STOCK_CONFIGS: StockConfig[] = [
     jumpIntensity: 0.6,
   },
   {
-    id: '9',
+    id: '4',
     name: 'AI솔루션',
     symbol: '900020',
     type: 'theme',
@@ -139,17 +84,6 @@ export const STOCK_CONFIGS: StockConfig[] = [
     kappa: 0.06,
     sigma: 0.18,
     jumpIntensity: 0.7,
-  },
-  {
-    id: '10',
-    name: '메타코인',
-    symbol: '900030',
-    type: 'theme',
-    initialPrice: 4800,
-    meanPrice: 4000,
-    kappa: 0.07,
-    sigma: 0.20, // 일일 20% 변동성
-    jumpIntensity: 0.8,
   },
 ];
 

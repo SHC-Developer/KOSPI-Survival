@@ -14,18 +14,12 @@ const THEME_TICK_CAP = 0.08;
 const DAILY_UPPER_LIMIT = 1.30;
 const DAILY_LOWER_LIMIT = 0.70;
 
-// 종목 설정
+// 종목 설정 (4개: 대형주 2개 + 작전주 2개)
 const STOCK_CONFIGS = [
   { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03 },
   { id: '2', name: 'SK하이닉스', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04 },
-  { id: '3', name: 'LG전자', type: 'bluechip', initialPrice: 95000, meanPrice: 100000, kappa: 0.02, sigma: 0.035 },
-  { id: '4', name: 'NAVER', type: 'bluechip', initialPrice: 195000, meanPrice: 210000, kappa: 0.03, sigma: 0.045 },
-  { id: '5', name: '카카오', type: 'bluechip', initialPrice: 42000, meanPrice: 45000, kappa: 0.035, sigma: 0.05 },
-  { id: '6', name: '현대차', type: 'bluechip', initialPrice: 245000, meanPrice: 250000, kappa: 0.02, sigma: 0.03 },
-  { id: '7', name: 'LG화학', type: 'bluechip', initialPrice: 380000, meanPrice: 400000, kappa: 0.025, sigma: 0.04 },
-  { id: '8', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15 },
-  { id: '9', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18 },
-  { id: '10', name: '메타코인', type: 'theme', initialPrice: 4800, meanPrice: 4000, kappa: 0.07, sigma: 0.20 },
+  { id: '3', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15 },
+  { id: '4', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18 },
 ];
 
 // ============== 유틸리티 함수 ==============
@@ -111,12 +105,13 @@ function getInitialPrices() {
 // 유틸: sleep 함수
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 1분마다 주가 업데이트 (Cloud Scheduler) - 내부에서 6번 (10초 간격) 업데이트
+// 1분마다 주가 업데이트 (Cloud Scheduler) - 내부에서 60번 (1초 간격) 업데이트
 exports.updateStockPrices = onSchedule({
   schedule: "* * * * *",
   timeZone: "Asia/Seoul",
   region: "asia-northeast3",
-  timeoutSeconds: 120,
+  timeoutSeconds: 540, // 9분 (안전 마진)
+  memory: "256MiB",
 }, async (event) => {
   try {
     // 서버 상태 확인
@@ -128,62 +123,59 @@ exports.updateStockPrices = onSchedule({
       return;
     }
     
-    // 1분 동안 6번 업데이트 (10초 간격)
-    for (let batch = 0; batch < 6; batch++) {
-      // 현재 주가 가져오기
-      const stockDoc = await db.doc('game/stockPrices').get();
-      let prices = stockDoc.exists ? stockDoc.data().prices : getInitialPrices();
-      let gameTick = stockDoc.exists ? (stockDoc.data().gameTick || 0) : 0;
-      let currentDay = stockDoc.exists ? (stockDoc.data().currentDay || 1) : 1;
-      let dayTickCount = gameTick % TICKS_PER_DAY;
-      
-      // 10틱(10초) 동안 업데이트
-      for (let i = 0; i < 10; i++) {
-        // 하루 종료 체크
-        if (dayTickCount >= TICKS_PER_DAY) {
-          // 새로운 날 시작
-          currentDay++;
-          dayTickCount = 0;
-          
-          // 전일 종가 업데이트 및 상하한가 재설정
-          STOCK_CONFIGS.forEach(config => {
-            const stock = prices[config.id];
-            const newPrevClose = stock.currentPrice;
-            prices[config.id] = {
-              ...stock,
-              previousClose: newPrevClose,
-              openPrice: newPrevClose,
-              upperLimit: Math.round(newPrevClose * DAILY_UPPER_LIMIT),
-              lowerLimit: Math.round(newPrevClose * DAILY_LOWER_LIMIT),
-              trendNoise: (Math.random() - 0.5) * 2,
-            };
-          });
-        }
+    // 현재 주가 가져오기
+    let stockDoc = await db.doc('game/stockPrices').get();
+    let prices = stockDoc.exists ? stockDoc.data().prices : getInitialPrices();
+    let gameTick = stockDoc.exists ? (stockDoc.data().gameTick || 0) : 0;
+    let currentDay = stockDoc.exists ? (stockDoc.data().currentDay || 1) : 1;
+    let dayTickCount = gameTick % TICKS_PER_DAY;
+    
+    // 1분 동안 60번 업데이트 (1초 간격)
+    for (let tick = 0; tick < 60; tick++) {
+      // 하루 종료 체크
+      if (dayTickCount >= TICKS_PER_DAY) {
+        // 새로운 날 시작
+        currentDay++;
+        dayTickCount = 0;
         
-        // 주가 업데이트
+        // 전일 종가 업데이트 및 상하한가 재설정
         STOCK_CONFIGS.forEach(config => {
           const stock = prices[config.id];
-          const newPrice = updatePriceOU(stock, config);
-          
-          // 추세 노이즈 업데이트 (180틱마다)
-          let newTrendNoise = stock.trendNoise || 0;
-          if (dayTickCount % 180 === 0) {
-            const targetTrend = (Math.random() - 0.5) * 2;
-            newTrendNoise = newTrendNoise * 0.3 + targetTrend * 0.7;
-          }
-          
+          const newPrevClose = stock.currentPrice;
           prices[config.id] = {
             ...stock,
-            currentPrice: newPrice,
-            trendNoise: newTrendNoise,
+            previousClose: newPrevClose,
+            openPrice: newPrevClose,
+            upperLimit: Math.round(newPrevClose * DAILY_UPPER_LIMIT),
+            lowerLimit: Math.round(newPrevClose * DAILY_LOWER_LIMIT),
+            trendNoise: (Math.random() - 0.5) * 2,
           };
         });
-        
-        gameTick++;
-        dayTickCount++;
       }
       
-      // Firebase에 저장
+      // 주가 업데이트
+      STOCK_CONFIGS.forEach(config => {
+        const stock = prices[config.id];
+        const newPrice = updatePriceOU(stock, config);
+        
+        // 추세 노이즈 업데이트 (180틱마다)
+        let newTrendNoise = stock.trendNoise || 0;
+        if (dayTickCount % 180 === 0) {
+          const targetTrend = (Math.random() - 0.5) * 2;
+          newTrendNoise = newTrendNoise * 0.3 + targetTrend * 0.7;
+        }
+        
+        prices[config.id] = {
+          ...stock,
+          currentPrice: newPrice,
+          trendNoise: newTrendNoise,
+        };
+      });
+      
+      gameTick++;
+      dayTickCount++;
+      
+      // Firebase에 저장 (매 틱마다)
       await db.doc('game/stockPrices').set({
         prices,
         gameTick,
@@ -191,15 +183,13 @@ exports.updateStockPrices = onSchedule({
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
       
-      console.log(`Batch ${batch + 1}/6: Day ${currentDay}, Tick ${gameTick}`);
-      
-      // 마지막 배치가 아니면 10초 대기
-      if (batch < 5) {
-        await sleep(10000);
+      // 마지막 틱이 아니면 1초 대기
+      if (tick < 59) {
+        await sleep(1000);
       }
     }
     
-    console.log('Stock prices update cycle completed.');
+    console.log(`Update cycle completed. Day ${currentDay}, Tick ${gameTick}`);
   } catch (error) {
     console.error('Error updating stock prices:', error);
   }
