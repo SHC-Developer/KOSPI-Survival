@@ -20,12 +20,16 @@ const MARKET_DURATION = 1800; // 30분 = 1800초 = 1일
 const NEWS_INTERVAL = 60; // 1분(60틱)마다 뉴스 이벤트
 
 // 종목 설정 (4개: 대형주 2개 + 작전주 2개)
+// jumpIntensity 조정: 대형주 상향, 작전주 하향 (더 균형 잡힌 변동폭)
 const STOCK_CONFIGS = [
-  { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03, jumpIntensity: 0.1 },
-  { id: '2', name: 'SK하이닉스', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04, jumpIntensity: 0.15 },
-  { id: '3', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15, jumpIntensity: 0.6 },
-  { id: '4', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18, jumpIntensity: 0.7 },
+  { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03, jumpIntensity: 0.3 },   // 1.5% ~ 6%
+  { id: '2', name: 'SK하이닉스', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04, jumpIntensity: 0.35 }, // 1.75% ~ 7%
+  { id: '3', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15, jumpIntensity: 0.4 },    // 8% ~ 24%
+  { id: '4', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18, jumpIntensity: 0.45 },   // 9% ~ 27%
 ];
+
+// 가짜 뉴스 확률 (30%)
+const FAKE_NEWS_PROBABILITY = 0.3;
 
 // 뉴스 템플릿
 const NEWS_TEMPLATES = {
@@ -139,6 +143,9 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
   const templates = isGood ? NEWS_TEMPLATES.GOOD : NEWS_TEMPLATES.BAD;
   const template = templates[Math.floor(Math.random() * templates.length)];
   
+  // 가짜 뉴스 여부 (30% 확률)
+  const isFakeNews = Math.random() < FAKE_NEWS_PROBABILITY;
+  
   // 점프 크기 결정
   let jumpPercent;
   if (config.type === 'bluechip') {
@@ -151,6 +158,19 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
   
   if (!isGood) jumpPercent = -jumpPercent;
   
+  // 가짜 뉴스인 경우: 역방향 또는 효과 감소
+  let actualJumpPercent = jumpPercent;
+  if (isFakeNews) {
+    const fakeEffect = Math.random();
+    if (fakeEffect < 0.5) {
+      // 50%: 역방향 (호재→하락, 악재→상승)
+      actualJumpPercent = -jumpPercent * (0.3 + Math.random() * 0.5); // 30%~80% 역방향
+    } else {
+      // 50%: 효과 없음 또는 미미함
+      actualJumpPercent = jumpPercent * (Math.random() * 0.2); // 0%~20% 효과
+    }
+  }
+  
   return {
     id: `news-${gameTick}-${config.id}`,
     time: gameTick,
@@ -161,7 +181,9 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
       : `${config.name}에 대한 투자 주의가 필요합니다.`,
     effect: isGood ? 'GOOD' : 'BAD',
     targetStockId: config.id,
-    jumpPercent: jumpPercent * 100, // 퍼센트로 저장
+    jumpPercent: actualJumpPercent * 100, // 실제 적용될 퍼센트 (가짜 뉴스 효과 반영)
+    isFakeNews: isFakeNews, // 가짜 뉴스 여부 (클라이언트에서 결과 확인용)
+    displayedEffect: isGood ? 'GOOD' : 'BAD', // 표시된 효과 (뉴스 내용 기준)
   };
 }
 
