@@ -14,13 +14,45 @@ const THEME_TICK_CAP = 0.08;
 const DAILY_UPPER_LIMIT = 1.30;
 const DAILY_LOWER_LIMIT = 0.70;
 
+// 50초 동안 1초마다 업데이트, 10초 갭
+const UPDATE_DURATION = 50;
+const NEWS_GAP_DURATION = 10;
+
 // 종목 설정 (4개: 대형주 2개 + 작전주 2개)
 const STOCK_CONFIGS = [
-  { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03 },
-  { id: '2', name: 'SK하이닉스', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04 },
-  { id: '3', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15 },
-  { id: '4', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18 },
+  { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03, jumpIntensity: 0.1 },
+  { id: '2', name: 'SK하이닉스', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04, jumpIntensity: 0.15 },
+  { id: '3', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15, jumpIntensity: 0.6 },
+  { id: '4', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18, jumpIntensity: 0.7 },
 ];
+
+// 뉴스 템플릿
+const NEWS_TEMPLATES = {
+  GOOD: [
+    "{name}, 분기 실적 예상치 크게 상회",
+    "{name}, 대규모 수주 계약 체결",
+    "{name}, 신규 사업 진출 발표",
+    "{name}, 기관 매수세 급증",
+    "{name}, 외국인 대량 매수 포착",
+    "{name}, 정부 지원 사업 선정",
+    "{name}, 신기술 특허 취득",
+    "{name}, 해외 진출 성공",
+    "{name}, 배당금 대폭 인상 예고",
+    "{name}, M&A 성사 임박",
+  ],
+  BAD: [
+    "{name}, 분기 실적 예상치 크게 하회",
+    "{name}, 대규모 리콜 발표",
+    "{name}, 핵심 인력 대거 이탈",
+    "{name}, 기관 매도세 급증",
+    "{name}, 외국인 대량 매도 포착",
+    "{name}, 규제 당국 조사 착수",
+    "{name}, 경쟁사에 시장 점유율 잠식",
+    "{name}, 주요 고객사 계약 해지",
+    "{name}, 분식회계 의혹 제기",
+    "{name}, 경영진 비리 혐의",
+  ],
+};
 
 // ============== 유틸리티 함수 ==============
 
@@ -100,12 +132,59 @@ function getInitialPrices() {
   return prices;
 }
 
+// 뉴스 이벤트 생성
+function generateNewsEvent(stock, config, gameTick, currentDay) {
+  const isGood = Math.random() > 0.5;
+  const templates = isGood ? NEWS_TEMPLATES.GOOD : NEWS_TEMPLATES.BAD;
+  const template = templates[Math.floor(Math.random() * templates.length)];
+  
+  // 점프 크기 결정
+  let jumpPercent;
+  if (config.type === 'bluechip') {
+    // 대형주: ±5% ~ ±20%
+    jumpPercent = (0.05 + Math.random() * 0.15) * config.jumpIntensity;
+  } else {
+    // 작전주: ±20% ~ ±60%
+    jumpPercent = (0.20 + Math.random() * 0.40) * config.jumpIntensity;
+  }
+  
+  if (!isGood) jumpPercent = -jumpPercent;
+  
+  return {
+    id: `news-${gameTick}-${config.id}`,
+    time: gameTick,
+    day: currentDay,
+    title: template.replace("{name}", config.name),
+    description: isGood 
+      ? `${config.name}에 대한 강력한 매수 신호가 포착되었습니다.`
+      : `${config.name}에 대한 투자 주의가 필요합니다.`,
+    effect: isGood ? 'GOOD' : 'BAD',
+    targetStockId: config.id,
+    jumpPercent: jumpPercent * 100, // 퍼센트로 저장
+  };
+}
+
+// 뉴스 점프 적용
+function applyNewsJump(stock, jumpPercent) {
+  let newPrice = stock.currentPrice * (1 + jumpPercent / 100);
+  newPrice = roundToTickSize(newPrice);
+  
+  // 상/하한가 제한
+  if (newPrice >= stock.upperLimit) {
+    newPrice = stock.upperLimit;
+  } else if (newPrice <= stock.lowerLimit) {
+    newPrice = stock.lowerLimit;
+  }
+  
+  return newPrice;
+}
+
 // ============== Cloud Functions ==============
 
 // 유틸: sleep 함수
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 1분마다 주가 업데이트 (Cloud Scheduler) - 내부에서 60번 (1초 간격) 업데이트
+// 1분마다 주가 업데이트 (Cloud Scheduler) - 50초 업데이트 + 10초 뉴스 갭
 exports.updateStockPrices = onSchedule({
   schedule: "* * * * *",
   timeZone: "Asia/Seoul",
@@ -130,8 +209,10 @@ exports.updateStockPrices = onSchedule({
     let currentDay = stockDoc.exists ? (stockDoc.data().currentDay || 1) : 1;
     let dayTickCount = gameTick % TICKS_PER_DAY;
     
-    // 1분 동안 60번 업데이트 (1초 간격)
-    for (let tick = 0; tick < 60; tick++) {
+    console.log(`Starting update cycle. Day ${currentDay}, Tick ${gameTick}`);
+    
+    // Phase 1: 50초 동안 1초마다 가격 업데이트
+    for (let tick = 0; tick < UPDATE_DURATION; tick++) {
       // 하루 종료 체크
       if (dayTickCount >= TICKS_PER_DAY) {
         // 새로운 날 시작
@@ -175,19 +256,94 @@ exports.updateStockPrices = onSchedule({
       gameTick++;
       dayTickCount++;
       
-      // Firebase에 저장 (매 틱마다)
+      // Firebase에 저장 (isNewsPhase: false)
       await db.doc('game/stockPrices').set({
         prices,
         gameTick,
         currentDay,
+        isNewsPhase: false,
+        newsPhaseCountdown: 0,
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
       
       // 마지막 틱이 아니면 1초 대기
-      if (tick < 59) {
+      if (tick < UPDATE_DURATION - 1) {
         await sleep(1000);
       }
     }
+    
+    // Phase 2: 10초 뉴스 갭
+    console.log('Starting news phase...');
+    
+    // 4개 종목 중 최소 1개 이상에 뉴스 발생
+    const newsStockCount = Math.floor(Math.random() * 3) + 1; // 1~3개 종목
+    const shuffledConfigs = [...STOCK_CONFIGS].sort(() => Math.random() - 0.5);
+    const selectedConfigs = shuffledConfigs.slice(0, newsStockCount);
+    
+    const newsEvents = selectedConfigs.map(config => {
+      const stock = prices[config.id];
+      return generateNewsEvent(stock, config, gameTick, currentDay);
+    });
+    
+    // 뉴스 이벤트를 Firebase에 저장 (클라이언트에서 표시용)
+    await db.doc('game/newsEvents').set({
+      events: newsEvents,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    // 3초 "뉴스 집중" 경고 시간
+    await db.doc('game/stockPrices').update({
+      isNewsPhase: true,
+      newsPhaseCountdown: 10,
+      newsWarningActive: true,
+    });
+    
+    await sleep(3000); // 3초 대기
+    
+    // 뉴스 경고 해제, 뉴스 표시 시작
+    await db.doc('game/stockPrices').update({
+      newsWarningActive: false,
+      newsPhaseCountdown: 7,
+    });
+    
+    // 7초 뉴스 표시 시간 (뉴스 점프 적용)
+    // 뉴스 점프를 적용한 가격 업데이트
+    newsEvents.forEach(news => {
+      const config = STOCK_CONFIGS.find(c => c.id === news.targetStockId);
+      if (config) {
+        const stock = prices[config.id];
+        const newPrice = applyNewsJump(stock, news.jumpPercent);
+        prices[config.id] = {
+          ...stock,
+          currentPrice: newPrice,
+        };
+      }
+    });
+    
+    // 뉴스 적용된 가격 저장
+    await db.doc('game/stockPrices').set({
+      prices,
+      gameTick,
+      currentDay,
+      isNewsPhase: true,
+      newsPhaseCountdown: 7,
+      newsWarningActive: false,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    // 7초 동안 카운트다운
+    for (let i = 6; i >= 0; i--) {
+      await sleep(1000);
+      await db.doc('game/stockPrices').update({
+        newsPhaseCountdown: i,
+      });
+    }
+    
+    // 뉴스 페이즈 종료
+    await db.doc('game/stockPrices').update({
+      isNewsPhase: false,
+      newsPhaseCountdown: 0,
+    });
     
     console.log(`Update cycle completed. Day ${currentDay}, Tick ${gameTick}`);
   } catch (error) {
@@ -228,6 +384,9 @@ exports.toggleServer = onCall({
         prices: getInitialPrices(),
         gameTick: 0,
         currentDay: 1,
+        isNewsPhase: false,
+        newsPhaseCountdown: 0,
+        newsWarningActive: false,
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
     }
@@ -274,7 +433,16 @@ exports.initializeServer = onCall({
     prices: getInitialPrices(),
     gameTick: 0,
     currentDay: 1,
+    isNewsPhase: false,
+    newsPhaseCountdown: 0,
+    newsWarningActive: false,
     lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+  });
+  
+  // 뉴스 초기화
+  await db.doc('game/newsEvents').set({
+    events: [],
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
   });
   
   return { success: true, message: 'Server initialized' };
@@ -301,9 +469,11 @@ exports.resetStockPrices = onCall({
     prices: getInitialPrices(),
     gameTick: 0,
     currentDay: 1,
+    isNewsPhase: false,
+    newsPhaseCountdown: 0,
+    newsWarningActive: false,
     lastUpdated: admin.firestore.FieldValue.serverTimestamp()
   });
   
   return { success: true, message: 'Stock prices reset' };
 });
-

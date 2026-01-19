@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useGameStore } from './store/gameStore';
-import { useAuthStore } from './store/authStore';
+import { useAuthStore, NewsEventData } from './store/authStore';
 import BottomNav from './components/BottomNav';
 import WatchlistPage from './components/WatchlistPage';
 import StockPricePage from './components/StockPricePage';
@@ -105,6 +105,7 @@ const App: React.FC = () => {
     loadFromFirebase, 
     loadStockPricesFromFirebase,
     updateGameTick,
+    setNewsEvents,
     cash, 
     portfolio, 
     stocks,
@@ -113,7 +114,10 @@ const App: React.FC = () => {
     currentPage,
     latestNews,
     clearLatestNews,
-    setPage
+    setPage,
+    isNewsPhase,
+    newsPhaseCountdown,
+    newsWarningActive
   } = useGameStore();
   
   const [showNewsPopup, setShowNewsPopup] = useState<NewsEvent | null>(null);
@@ -133,7 +137,8 @@ const App: React.FC = () => {
     updateNickname,
     canChangeNickname,
     loadStockPrices,
-    subscribeToStockPrices
+    subscribeToStockPrices,
+    subscribeToNewsEvents
   } = useAuthStore();
   
   const saveIntervalRef = useRef<number | null>(null);
@@ -207,6 +212,28 @@ const App: React.FC = () => {
       unsubscribe();
     };
   }, [user, dataLoaded, subscribeToStockPrices, loadStockPricesFromFirebase]);
+
+  // Subscribe to news events from Firebase
+  useEffect(() => {
+    if (!user || !dataLoaded) return;
+    
+    console.log('[App] Subscribing to news events');
+    const unsubscribe = subscribeToNewsEvents((events: NewsEventData[]) => {
+      if (events.length > 0) {
+        // NewsEventData를 NewsEvent로 변환
+        const convertedEvents: NewsEvent[] = events.map(e => ({
+          ...e,
+          resolved: false,
+        }));
+        setNewsEvents(convertedEvents);
+      }
+    });
+    
+    return () => {
+      console.log('[App] Unsubscribing from news events');
+      unsubscribe();
+    };
+  }, [user, dataLoaded, subscribeToNewsEvents, setNewsEvents]);
 
   // 실시간 동기화는 비활성화 - 로컬 게임 상태가 Firebase에 의해 덮어씌워지는 문제 방지
   // Firebase는 10초마다 저장만 하고, 로드는 페이지 로드 시 한 번만 수행
@@ -390,8 +417,37 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100 max-w-lg mx-auto relative">
+      {/* 뉴스 경고 팝업 (3초) */}
+      {newsWarningActive && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="text-center animate-pulse">
+            <div className="text-6xl mb-6">📰</div>
+            <h2 className="text-2xl font-bold text-yellow-400 mb-3">
+              잠시 거래를 멈추고
+            </h2>
+            <h2 className="text-2xl font-bold text-yellow-400 mb-6">
+              뉴스에 집중해주세요
+            </h2>
+            <div className="text-gray-400 text-sm">
+              곧 중요한 뉴스가 발표됩니다...
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 뉴스 페이즈 카운트다운 */}
+      {isNewsPhase && !newsWarningActive && newsPhaseCountdown > 0 && (
+        <div className="fixed top-14 left-0 right-0 z-[55] flex justify-center px-4">
+          <div className="bg-gradient-to-r from-purple-900/95 to-indigo-900/95 border border-purple-600 rounded-lg px-4 py-2 shadow-xl">
+            <span className="text-purple-300 text-sm font-medium">
+              📰 뉴스 타임 - {newsPhaseCountdown}초 후 거래 재개
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* 뉴스 팝업 */}
-      {showNewsPopup && (
+      {showNewsPopup && !newsWarningActive && (
         <NewsPopup news={showNewsPopup} onClose={handleCloseNewsPopup} />
       )}
       

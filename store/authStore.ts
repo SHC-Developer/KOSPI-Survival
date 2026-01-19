@@ -28,6 +28,21 @@ export interface StockPriceDocument {
   prices: StockPriceData;
   gameTick?: number;
   currentDay?: number;
+  isNewsPhase?: boolean;
+  newsPhaseCountdown?: number;
+  newsWarningActive?: boolean;
+}
+
+// 뉴스 이벤트 타입
+export interface NewsEventData {
+  id: string;
+  time: number;
+  day: number;
+  title: string;
+  description: string;
+  effect: 'GOOD' | 'BAD';
+  targetStockId: string;
+  jumpPercent: number;
 }
 
 // 사용자 정보 타입
@@ -84,6 +99,7 @@ interface AuthState {
   saveStockPrices: (prices: StockPriceData) => Promise<void>;
   loadStockPrices: () => Promise<StockPriceDocument | null>;
   subscribeToStockPrices: (callback: (data: StockPriceDocument) => void) => () => void;
+  subscribeToNewsEvents: (callback: (events: NewsEventData[]) => void) => () => void;
   
   // Server status
   getServerStatus: () => Promise<{ isRunning: boolean } | null>;
@@ -484,16 +500,44 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          console.log('[Firebase] Stock prices update received', { gameTick: data.gameTick, currentDay: data.currentDay });
+          console.log('[Firebase] Stock prices update received', { 
+            gameTick: data.gameTick, 
+            currentDay: data.currentDay,
+            isNewsPhase: data.isNewsPhase,
+            newsWarningActive: data.newsWarningActive
+          });
           callback({
             prices: data.prices as StockPriceData,
             gameTick: data.gameTick,
-            currentDay: data.currentDay
+            currentDay: data.currentDay,
+            isNewsPhase: data.isNewsPhase,
+            newsPhaseCountdown: data.newsPhaseCountdown,
+            newsWarningActive: data.newsWarningActive
           });
         }
       },
       (error) => {
         console.error('Stock prices sync error:', error);
+      }
+    );
+    
+    return unsubscribe;
+  },
+
+  // 뉴스 이벤트 실시간 구독
+  subscribeToNewsEvents: (callback: (events: NewsEventData[]) => void) => {
+    const newsEventsRef = doc(db, 'game', 'newsEvents');
+    const unsubscribe = onSnapshot(
+      newsEventsRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          console.log('[Firebase] News events received', { count: data.events?.length || 0 });
+          callback(data.events || []);
+        }
+      },
+      (error) => {
+        console.error('News events sync error:', error);
       }
     );
     

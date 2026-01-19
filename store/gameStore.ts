@@ -50,6 +50,9 @@ interface StockPriceDocument {
   prices: StockPriceData;
   gameTick?: number;
   currentDay?: number;
+  isNewsPhase?: boolean;
+  newsPhaseCountdown?: number;
+  newsWarningActive?: boolean;
 }
 
 interface GameStore extends GameState {
@@ -57,6 +60,9 @@ interface GameStore extends GameState {
   realizedPnL: number;
   pendingOrders: PendingOrder[];
   latestNews: NewsEvent | null; // 가장 최근 뉴스 (팝업용)
+  isNewsPhase: boolean; // 뉴스 페이즈 여부
+  newsPhaseCountdown: number; // 뉴스 페이즈 남은 시간
+  newsWarningActive: boolean; // 뉴스 경고 활성화 여부
   initialize: () => void;
   loadFromFirebase: (cash: number, portfolio: { stockId: string; quantity: number; averagePrice: number }[], gameTick: number) => void;
   getDataForFirebase: () => { cash: number; portfolio: { stockId: string; quantity: number; averagePrice: number }[]; gameTick: number };
@@ -68,6 +74,7 @@ interface GameStore extends GameState {
   cancelPendingOrder: (orderId: string) => void;
   clearLatestNews: () => void;
   sellAllStocks: () => void;
+  setNewsEvents: (news: NewsEvent[]) => void;
 }
 
 // Box-Muller 변환을 이용한 정규분포 난수 생성
@@ -116,6 +123,34 @@ const generateOrderBook = (currentPrice: number, isBluechip: boolean): OrderBook
     }
   }
   
+  return { asks: asks.reverse(), bids };
+};
+
+// 현재 가격 기준으로 호가창 생성 (Firebase에서 가격 업데이트 시 사용)
+const generateOrderBookFromPrice = (currentPrice: number, isBluechip: boolean): OrderBook => {
+  const tickSize = getTickSize(currentPrice);
+  const asks: OrderLevel[] = [];
+  const bids: OrderLevel[] = [];
+  
+  const volumeMultiplier = isBluechip ? 5 : 1;
+  
+  // 매도 호가: 현재가 위로 5개 (현재가 + 1틱부터)
+  for (let i = 1; i <= 5; i++) {
+    const askPrice = roundToTickSize(currentPrice + tickSize * i);
+    const askVolume = Math.floor((Math.random() * 30000 + 5000) * volumeMultiplier);
+    asks.push({ price: askPrice, volume: askVolume });
+  }
+  
+  // 매수 호가: 현재가 아래로 5개 (현재가부터)
+  for (let i = 0; i < 5; i++) {
+    const bidPrice = roundToTickSize(currentPrice - tickSize * i);
+    const bidVolume = Math.floor((Math.random() * 30000 + 5000) * volumeMultiplier);
+    if (bidPrice > 0) {
+      bids.push({ price: bidPrice, volume: bidVolume });
+    }
+  }
+  
+  // 매도호가는 높은 가격이 위 (역순 정렬)
   return { asks: asks.reverse(), bids };
 };
 
@@ -389,6 +424,9 @@ export const useGameStore = create<GameStore>()(
       realizedPnL: 0,
       pendingOrders: [],
       latestNews: null,
+      isNewsPhase: false,
+      newsPhaseCountdown: 0,
+      newsWarningActive: false,
       gameTick: 0,
       isPlaying: false,
       selectedStockId: '1',
@@ -456,6 +494,9 @@ export const useGameStore = create<GameStore>()(
         const updatedStocks = stocks.map(stock => {
           const priceData = prices[stock.id];
           if (priceData) {
+            const priceChange = priceData.currentPrice - stock.currentPrice;
+            // 호가창도 현재 가격 기준으로 업데이트
+            const newOrderBook = generateOrderBookFromPrice(priceData.currentPrice, stock.type === 'bluechip');
             return {
               ...stock,
               currentPrice: priceData.currentPrice,
@@ -463,12 +504,13 @@ export const useGameStore = create<GameStore>()(
               openPrice: priceData.openPrice,
               upperLimit: priceData.upperLimit,
               lowerLimit: priceData.lowerLimit,
+              orderBook: newOrderBook,
             };
           }
           return stock;
         });
         
-        const updates: any = { stocks: updatedStocks };
+        const updates: Partial<GameState> = { stocks: updatedStocks };
         
         // gameTick과 currentDay도 업데이트 (서버에서 제공하는 경우)
         if (data.gameTick !== undefined) {
@@ -479,8 +521,19 @@ export const useGameStore = create<GameStore>()(
           updates.currentDay = data.currentDay;
         }
         
+        // 뉴스 페이즈 상태 업데이트
+        if (data.isNewsPhase !== undefined) {
+          (updates as any).isNewsPhase = data.isNewsPhase;
+        }
+        if (data.newsPhaseCountdown !== undefined) {
+          (updates as any).newsPhaseCountdown = data.newsPhaseCountdown;
+        }
+        if (data.newsWarningActive !== undefined) {
+          (updates as any).newsWarningActive = data.newsWarningActive;
+        }
+        
         set(updates);
-        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay });
+        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay, isNewsPhase: data.isNewsPhase });
       },
 
       updateGameTick: (gameTick: number, currentDay: number) => {
@@ -860,6 +913,17 @@ export const useGameStore = create<GameStore>()(
       // 최근 뉴스 클리어 (팝업 닫기용)
       clearLatestNews: () => {
         set({ latestNews: null });
+      },
+      
+      // 뉴스 이벤트 설정 (Firebase에서 받은 뉴스)
+      setNewsEvents: (newsEvents: NewsEvent[]) => {
+        const { news } = get();
+        // 기존 뉴스에 새 뉴스 추가
+        const newNews = [...newsEvents, ...news].slice(0, 30);
+        set({ 
+          news: newNews,
+          latestNews: newsEvents.length > 0 ? newsEvents[0] : null 
+        });
       },
       
       // 전량 매도
