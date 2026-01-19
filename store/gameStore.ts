@@ -53,6 +53,9 @@ interface StockPriceDocument {
   isNewsPhase?: boolean;
   newsPhaseCountdown?: number;
   newsWarningActive?: boolean;
+  isMarketClosed?: boolean;
+  marketClosingMessage?: string | null;
+  dayProgress?: number;
 }
 
 interface GameStore extends GameState {
@@ -63,6 +66,9 @@ interface GameStore extends GameState {
   isNewsPhase: boolean; // 뉴스 페이즈 여부
   newsPhaseCountdown: number; // 뉴스 페이즈 남은 시간
   newsWarningActive: boolean; // 뉴스 경고 활성화 여부
+  isMarketClosed: boolean; // 장 마감 여부
+  marketClosingMessage: string | null; // 장 마감 메시지
+  dayProgress: number; // 하루 진행률 (%)
   initialize: () => void;
   loadFromFirebase: (cash: number, portfolio: { stockId: string; quantity: number; averagePrice: number }[], gameTick: number) => void;
   getDataForFirebase: () => { cash: number; portfolio: { stockId: string; quantity: number; averagePrice: number }[]; gameTick: number };
@@ -427,6 +433,9 @@ export const useGameStore = create<GameStore>()(
       isNewsPhase: false,
       newsPhaseCountdown: 0,
       newsWarningActive: false,
+      isMarketClosed: false,
+      marketClosingMessage: null,
+      dayProgress: 0,
       gameTick: 0,
       isPlaying: false,
       selectedStockId: '1',
@@ -532,8 +541,19 @@ export const useGameStore = create<GameStore>()(
           (updates as any).newsWarningActive = data.newsWarningActive;
         }
         
+        // 장 마감 상태 업데이트
+        if (data.isMarketClosed !== undefined) {
+          (updates as any).isMarketClosed = data.isMarketClosed;
+        }
+        if (data.marketClosingMessage !== undefined) {
+          (updates as any).marketClosingMessage = data.marketClosingMessage;
+        }
+        if (data.dayProgress !== undefined) {
+          (updates as any).dayProgress = data.dayProgress;
+        }
+        
         set(updates);
-        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay, isNewsPhase: data.isNewsPhase });
+        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay, isNewsPhase: data.isNewsPhase, isMarketClosed: data.isMarketClosed });
       },
 
       updateGameTick: (gameTick: number, currentDay: number) => {

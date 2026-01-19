@@ -117,7 +117,10 @@ const App: React.FC = () => {
     setPage,
     isNewsPhase,
     newsPhaseCountdown,
-    newsWarningActive
+    newsWarningActive,
+    isMarketClosed,
+    marketClosingMessage,
+    dayProgress
   } = useGameStore();
   
   const [showNewsPopup, setShowNewsPopup] = useState<NewsEvent | null>(null);
@@ -417,8 +420,27 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100 max-w-lg mx-auto relative">
+      {/* 장 마감 팝업 */}
+      {isMarketClosed && marketClosingMessage && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/90 backdrop-blur-sm">
+          <div className="text-center px-6">
+            <div className="text-6xl mb-6">🔔</div>
+            <h2 className="text-2xl font-bold text-orange-400 mb-4">
+              장 마감
+            </h2>
+            <p className="text-lg text-gray-200 mb-6">
+              {marketClosingMessage}
+            </p>
+            <div className="flex items-center justify-center gap-2 text-gray-400 text-sm">
+              <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+              <span>다음 장 개장을 기다리는 중...</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 뉴스 경고 팝업 (3초) */}
-      {newsWarningActive && (
+      {newsWarningActive && !isMarketClosed && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="text-center animate-pulse">
             <div className="text-6xl mb-6">📰</div>
@@ -454,11 +476,30 @@ const App: React.FC = () => {
       {/* 상단 컨트롤 바 */}
       <div className="fixed top-0 left-0 right-0 z-50 bg-gray-900/95 backdrop-blur border-b border-gray-800 safe-area-top">
         <div className="max-w-lg mx-auto flex items-center justify-between px-3 py-2">
-          <h1 className="text-sm font-bold bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">
-            KOSPI Survival
-          </h1>
-          
           <div className="flex items-center gap-2">
+            <h1 className="text-sm font-bold bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">
+              KOSPI Survival
+            </h1>
+            <span className="text-xs text-gray-500">Day {currentDay}</span>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {/* 하루 진행률 바 */}
+            {!isMarketClosed && (
+              <div className="flex items-center gap-2">
+                <div className="w-20 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-orange-500 to-red-500 transition-all duration-1000"
+                    style={{ width: `${dayProgress}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500">{dayProgress}%</span>
+              </div>
+            )}
+            {isMarketClosed && (
+              <span className="text-xs text-orange-400 animate-pulse">휴장 중</span>
+            )}
+            
             <button 
               onClick={() => { if(confirm('로그아웃 하시겠습니까?')) logout(); }}
               className="p-2 text-gray-400 hover:text-red-400 transition-colors"

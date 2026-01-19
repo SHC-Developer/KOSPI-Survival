@@ -14,10 +14,10 @@ const THEME_TICK_CAP = 0.08;
 const DAILY_UPPER_LIMIT = 1.30;
 const DAILY_LOWER_LIMIT = 0.70;
 
-// 50초 동안 1초마다 업데이트, 9초 뉴스 갭 (총 59초, 1초 버퍼)
-// Cloud Scheduler가 정확히 60초에 다시 트리거하므로 1초 여유 필요
-const UPDATE_DURATION = 50;
-const NEWS_GAP_DURATION = 9;
+// 30분(1800초) 동안 1초마다 업데이트 = 1일
+// Cloud Scheduler가 30분마다 트리거
+const MARKET_DURATION = 1800; // 30분 = 1800초 = 1일
+const NEWS_INTERVAL = 60; // 1분(60틱)마다 뉴스 이벤트
 
 // 종목 설정 (4개: 대형주 2개 + 작전주 2개)
 const STOCK_CONFIGS = [
@@ -185,13 +185,13 @@ function applyNewsJump(stock, jumpPercent) {
 // 유틸: sleep 함수
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 1분마다 주가 업데이트 (Cloud Scheduler) - 50초 업데이트 + 9초 뉴스 갭 = 59초 (1초 버퍼)
+// 30분마다 주가 업데이트 (Cloud Scheduler) - 30분 동안 매초 업데이트 후 장 마감
 exports.updateStockPrices = onSchedule({
-  schedule: "* * * * *",
+  schedule: "*/30 * * * *", // 30분마다 (0분, 30분)
   timeZone: "Asia/Seoul",
   region: "asia-northeast3",
-  timeoutSeconds: 540,
-  memory: "256MiB",
+  timeoutSeconds: 2100, // 35분 (30분 + 여유)
+  memory: "512MiB",
 }, async (event) => {
   const cycleStartTime = Date.now();
   
@@ -210,32 +210,105 @@ exports.updateStockPrices = onSchedule({
     let prices = stockDoc.exists ? stockDoc.data().prices : getInitialPrices();
     let gameTick = stockDoc.exists ? (stockDoc.data().gameTick || 0) : 0;
     let currentDay = stockDoc.exists ? (stockDoc.data().currentDay || 1) : 1;
-    let dayTickCount = gameTick % TICKS_PER_DAY;
     
-    console.log(`Starting update cycle. Day ${currentDay}, Tick ${gameTick}`);
+    // 새로운 장 시작 - 전일 종가 업데이트
+    console.log(`=== Day ${currentDay} Market Open ===`);
+    STOCK_CONFIGS.forEach(config => {
+      const stock = prices[config.id];
+      const newPrevClose = stock.currentPrice;
+      prices[config.id] = {
+        ...stock,
+        previousClose: newPrevClose,
+        openPrice: newPrevClose,
+        upperLimit: Math.round(newPrevClose * DAILY_UPPER_LIMIT),
+        lowerLimit: Math.round(newPrevClose * DAILY_LOWER_LIMIT),
+        trendNoise: (Math.random() - 0.5) * 2,
+      };
+    });
     
-    // Phase 1: 48초 동안 1초마다 가격 업데이트 (절대 시간 기준)
-    for (let tick = 0; tick < UPDATE_DURATION; tick++) {
-      // 목표 시간: 시작 시간 + tick * 1000ms
+    // 장 개장 상태 저장
+    await db.doc('game/stockPrices').set({
+      prices,
+      gameTick,
+      currentDay,
+      isMarketClosed: false,
+      isNewsPhase: false,
+      newsPhaseCountdown: 0,
+      marketClosingMessage: null,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    // 30분(1800초) 동안 매초 업데이트
+    for (let tick = 0; tick < MARKET_DURATION; tick++) {
       const targetTime = cycleStartTime + (tick * 1000);
       
-      // 하루 종료 체크
-      if (dayTickCount >= TICKS_PER_DAY) {
-        currentDay++;
-        dayTickCount = 0;
+      // 뉴스 이벤트 체크 (1분마다)
+      const isNewsTime = tick > 0 && tick % NEWS_INTERVAL === 0;
+      
+      if (isNewsTime) {
+        // 뉴스 페이즈 시작
+        console.log(`News event at tick ${tick}`);
         
-        STOCK_CONFIGS.forEach(config => {
+        // 4개 종목 중 1~2개에 뉴스 발생
+        const newsStockCount = Math.floor(Math.random() * 2) + 1;
+        const shuffledConfigs = [...STOCK_CONFIGS].sort(() => Math.random() - 0.5);
+        const selectedConfigs = shuffledConfigs.slice(0, newsStockCount);
+        
+        const newsEvents = selectedConfigs.map(config => {
           const stock = prices[config.id];
-          const newPrevClose = stock.currentPrice;
-          prices[config.id] = {
-            ...stock,
-            previousClose: newPrevClose,
-            openPrice: newPrevClose,
-            upperLimit: Math.round(newPrevClose * DAILY_UPPER_LIMIT),
-            lowerLimit: Math.round(newPrevClose * DAILY_LOWER_LIMIT),
-            trendNoise: (Math.random() - 0.5) * 2,
-          };
+          return generateNewsEvent(stock, config, gameTick, currentDay);
         });
+        
+        // 뉴스 저장
+        await db.doc('game/newsEvents').set({
+          events: newsEvents,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        // 뉴스 경고 (3초)
+        await db.doc('game/stockPrices').update({
+          isNewsPhase: true,
+          newsPhaseCountdown: 10,
+          newsWarningActive: true,
+        });
+        
+        await sleep(3000);
+        
+        // 뉴스 점프 적용
+        newsEvents.forEach(news => {
+          const config = STOCK_CONFIGS.find(c => c.id === news.targetStockId);
+          if (config) {
+            const stock = prices[config.id];
+            const newPrice = applyNewsJump(stock, news.jumpPercent);
+            prices[config.id] = {
+              ...stock,
+              currentPrice: newPrice,
+            };
+          }
+        });
+        
+        await db.doc('game/stockPrices').set({
+          prices,
+          gameTick,
+          currentDay,
+          isMarketClosed: false,
+          isNewsPhase: true,
+          newsPhaseCountdown: 7,
+          newsWarningActive: false,
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        // 7초 대기
+        await sleep(7000);
+        
+        // 뉴스 페이즈 종료
+        await db.doc('game/stockPrices').update({
+          isNewsPhase: false,
+          newsPhaseCountdown: 0,
+        });
+        
+        // 뉴스 시간 보정 (10초 소요)
+        continue;
       }
       
       // 주가 업데이트
@@ -244,7 +317,7 @@ exports.updateStockPrices = onSchedule({
         const newPrice = updatePriceOU(stock, config);
         
         let newTrendNoise = stock.trendNoise || 0;
-        if (dayTickCount % 180 === 0) {
+        if (tick % 180 === 0) {
           const targetTrend = (Math.random() - 0.5) * 2;
           newTrendNoise = newTrendNoise * 0.3 + targetTrend * 0.7;
         }
@@ -257,20 +330,21 @@ exports.updateStockPrices = onSchedule({
       });
       
       gameTick++;
-      dayTickCount++;
       
       // Firebase에 저장
       await db.doc('game/stockPrices').set({
         prices,
         gameTick,
         currentDay,
+        isMarketClosed: false,
         isNewsPhase: false,
         newsPhaseCountdown: 0,
+        dayProgress: Math.round((tick / MARKET_DURATION) * 100), // 진행률 (%)
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
       
       // 다음 틱 목표 시간까지 대기
-      if (tick < UPDATE_DURATION - 1) {
+      if (tick < MARKET_DURATION - 1) {
         const nextTargetTime = cycleStartTime + ((tick + 1) * 1000);
         const waitTime = Math.max(0, nextTargetTime - Date.now());
         if (waitTime > 0) {
@@ -279,81 +353,37 @@ exports.updateStockPrices = onSchedule({
       }
     }
     
-    // Phase 2: 9초 뉴스 갭 (50초 지점부터 시작)
-    const newsPhaseStartTime = cycleStartTime + (UPDATE_DURATION * 1000); // 50초 시점
-    const elapsedBeforeNews = Date.now() - cycleStartTime;
-    console.log(`Starting news phase at ${elapsedBeforeNews}ms`);
-    
-    // 4개 종목 중 1~3개에 뉴스 발생
-    const newsStockCount = Math.floor(Math.random() * 3) + 1;
-    const shuffledConfigs = [...STOCK_CONFIGS].sort(() => Math.random() - 0.5);
-    const selectedConfigs = shuffledConfigs.slice(0, newsStockCount);
-    
-    const newsEvents = selectedConfigs.map(config => {
-      const stock = prices[config.id];
-      return generateNewsEvent(stock, config, gameTick, currentDay);
-    });
-    
-    // 뉴스 이벤트 저장 + 뉴스 페이즈 시작 (병렬 처리로 시간 단축)
-    await Promise.all([
-      db.doc('game/newsEvents').set({
-        events: newsEvents,
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      }),
-      db.doc('game/stockPrices').update({
-        isNewsPhase: true,
-        newsPhaseCountdown: NEWS_GAP_DURATION,
-        newsWarningActive: true,
-      })
-    ]);
-    
-    // 3초 경고 시간 (50초~53초)
-    const warningEndTime = newsPhaseStartTime + 3000;
-    let waitTime = Math.max(0, warningEndTime - Date.now());
-    if (waitTime > 0) await sleep(waitTime);
-    
-    // 뉴스 경고 해제 + 뉴스 점프 적용 (53초 시점)
-    newsEvents.forEach(news => {
-      const config = STOCK_CONFIGS.find(c => c.id === news.targetStockId);
-      if (config) {
-        const stock = prices[config.id];
-        const newPrice = applyNewsJump(stock, news.jumpPercent);
-        prices[config.id] = {
-          ...stock,
-          currentPrice: newPrice,
-        };
-      }
-    });
+    // 장 마감 처리
+    currentDay++;
     
     await db.doc('game/stockPrices').set({
       prices,
       gameTick,
       currentDay,
-      isNewsPhase: true,
-      newsPhaseCountdown: 6,
-      newsWarningActive: false,
+      isMarketClosed: true,
+      isNewsPhase: false,
+      newsPhaseCountdown: 0,
+      marketClosingMessage: "📢 장이 마감되었습니다. 약 1~3분 이후 다음 장이 개장합니다.",
+      dayProgress: 100,
       lastUpdated: admin.firestore.FieldValue.serverTimestamp()
     });
     
-    // 6초 대기 후 뉴스 페이즈 종료 (53초~59초)
-    // Firebase 쓰기 최소화: 카운트다운 업데이트 없이 대기만
-    const cycleEndTime = cycleStartTime + 59000; // 59초에 종료
-    waitTime = Math.max(0, cycleEndTime - Date.now());
-    if (waitTime > 0) await sleep(waitTime);
-    
-    // 뉴스 페이즈 종료 (59초 시점)
-    await db.doc('game/stockPrices').update({
-      isNewsPhase: false,
-      newsPhaseCountdown: 0,
-    });
-    
     const totalElapsed = Date.now() - cycleStartTime;
-    console.log(`Cycle completed. Day ${currentDay}, Tick ${gameTick}, Duration: ${totalElapsed}ms`);
+    console.log(`=== Day ${currentDay - 1} Market Closed === Duration: ${Math.round(totalElapsed / 1000)}s`);
     
-    // 함수가 59초에 끝나면 다음 분까지 1초 대기
-    // Cloud Scheduler가 다음 분에 다시 트리거
+    // 함수 종료 - 다음 30분에 Cloud Scheduler가 다시 트리거
   } catch (error) {
     console.error('Error updating stock prices:', error);
+    
+    // 에러 발생 시 장 마감 상태로 전환
+    try {
+      await db.doc('game/stockPrices').update({
+        isMarketClosed: true,
+        marketClosingMessage: "⚠️ 서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+      });
+    } catch (e) {
+      console.error('Failed to update error state:', e);
+    }
   }
 });
 
