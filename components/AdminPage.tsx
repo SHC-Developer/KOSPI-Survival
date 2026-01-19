@@ -1,22 +1,39 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuthStore, UserInfo } from '../store/authStore';
 import { useGameStore } from '../store/gameStore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const AdminPage: React.FC = () => {
-  const { getAllUsers, addCashToUser, deleteUser, logout, user, saveStockPrices } = useAuthStore();
-  const { tick, stocks, getStockPricesForFirebase, initialize } = useGameStore();
+  const { getAllUsers, addCashToUser, deleteUser, logout, user, getServerStatus, subscribeToServerStatus } = useAuthStore();
+  const { stocks, loadStockPricesFromFirebase } = useGameStore();
+  const { subscribeToStockPrices } = useAuthStore();
+  
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<UserInfo | null>(null);
   const [amount, setAmount] = useState<string>('');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isMarketRunning, setIsMarketRunning] = useState(false);
-  const tickIntervalRef = useRef<number | null>(null);
-  const saveIntervalRef = useRef<number | null>(null);
+  const [isToggling, setIsToggling] = useState(false);
 
   useEffect(() => {
     loadUsers();
-    initialize();
+    loadServerStatus();
+    
+    // 서버 상태 실시간 구독
+    const unsubscribeServer = subscribeToServerStatus((status) => {
+      setIsMarketRunning(status.isRunning);
+    });
+    
+    // 주가 실시간 구독
+    const unsubscribePrices = subscribeToStockPrices((data) => {
+      loadStockPricesFromFirebase(data);
+    });
+    
+    return () => {
+      unsubscribeServer();
+      unsubscribePrices();
+    };
   }, []);
 
   const loadUsers = async () => {
@@ -26,54 +43,60 @@ const AdminPage: React.FC = () => {
     setLoading(false);
   };
 
-  // 주가 서버 시작/중지
-  const toggleMarket = () => {
-    if (isMarketRunning) {
-      // 중지
-      if (tickIntervalRef.current) {
-        clearInterval(tickIntervalRef.current);
-        tickIntervalRef.current = null;
-      }
-      if (saveIntervalRef.current) {
-        clearInterval(saveIntervalRef.current);
-        saveIntervalRef.current = null;
-      }
-      setIsMarketRunning(false);
-      setMessage({ type: 'success', text: '주가 서버가 중지되었습니다.' });
-    } else {
-      // 시작
-      // 1초마다 주가 업데이트
-      tickIntervalRef.current = window.setInterval(() => {
-        tick();
-      }, 1000);
+  const loadServerStatus = async () => {
+    const status = await getServerStatus();
+    if (status) {
+      setIsMarketRunning(status.isRunning);
+    }
+  };
 
-      // 10초마다 Firebase에 저장
-      saveIntervalRef.current = window.setInterval(() => {
-        const prices = getStockPricesForFirebase();
-        saveStockPrices(prices);
-      }, 10000);
+  // Cloud Functions를 통한 서버 시작/중지
+  const toggleMarket = async () => {
+    setIsToggling(true);
+    try {
+      const functions = getFunctions(undefined, 'asia-northeast3');
+      const toggleServer = httpsCallable(functions, 'toggleServer');
+      
+      const action = isMarketRunning ? 'stop' : 'start';
+      const result = await toggleServer({ action });
+      
+      console.log('[Admin] Server toggle result:', result.data);
+      setMessage({ 
+        type: 'success', 
+        text: isMarketRunning 
+          ? '주가 서버가 중지되었습니다.' 
+          : '주가 서버가 시작되었습니다. 10초마다 자동으로 주가가 업데이트됩니다.' 
+      });
+    } catch (error: any) {
+      console.error('[Admin] Server toggle error:', error);
+      setMessage({ 
+        type: 'error', 
+        text: `서버 제어 실패: ${error.message || '알 수 없는 오류'}` 
+      });
+    } finally {
+      setIsToggling(false);
+      setTimeout(() => setMessage(null), 5000);
+    }
+  };
 
-      // 시작 시 바로 한 번 저장
-      const prices = getStockPricesForFirebase();
-      saveStockPrices(prices);
-
-      setIsMarketRunning(true);
-      setMessage({ type: 'success', text: '주가 서버가 시작되었습니다. 모든 유저에게 실시간 주가가 동기화됩니다.' });
+  // 주가 초기화
+  const resetStockPrices = async () => {
+    if (!confirm('정말로 모든 주가를 초기화하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.')) {
+      return;
+    }
+    
+    try {
+      const functions = getFunctions(undefined, 'asia-northeast3');
+      const resetPrices = httpsCallable(functions, 'resetStockPrices');
+      await resetPrices({});
+      
+      setMessage({ type: 'success', text: '주가가 초기화되었습니다.' });
+    } catch (error: any) {
+      console.error('[Admin] Reset prices error:', error);
+      setMessage({ type: 'error', text: `주가 초기화 실패: ${error.message}` });
     }
     setTimeout(() => setMessage(null), 3000);
   };
-
-  // 컴포넌트 언마운트 시 정리
-  useEffect(() => {
-    return () => {
-      if (tickIntervalRef.current) {
-        clearInterval(tickIntervalRef.current);
-      }
-      if (saveIntervalRef.current) {
-        clearInterval(saveIntervalRef.current);
-      }
-    };
-  }, []);
 
   const handleAddCash = async () => {
     if (!selectedUser || !amount) return;
@@ -90,7 +113,7 @@ const AdminPage: React.FC = () => {
       setMessage({ type: 'success', text: `${selectedUser.email}에게 ${amountNum.toLocaleString()}원을 지급했습니다.` });
       setAmount('');
       setSelectedUser(null);
-      loadUsers(); // 목록 새로고침
+      loadUsers();
     } else {
       setMessage({ type: 'error', text: '금액 지급에 실패했습니다.' });
     }
@@ -113,7 +136,7 @@ const AdminPage: React.FC = () => {
     
     if (success) {
       setMessage({ type: 'success', text: `${targetUser.email} 사용자가 삭제되었습니다.` });
-      loadUsers(); // 목록 새로고침
+      loadUsers();
     } else {
       setMessage({ type: 'error', text: '사용자 삭제에 실패했습니다.' });
     }
@@ -144,13 +167,14 @@ const AdminPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={toggleMarket}
-              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+              disabled={isToggling}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors disabled:opacity-50 ${
                 isMarketRunning 
                   ? 'bg-red-600 hover:bg-red-500 text-white' 
                   : 'bg-green-600 hover:bg-green-500 text-white'
               }`}
             >
-              {isMarketRunning ? '🛑 주가서버 중지' : '▶️ 주가서버 시작'}
+              {isToggling ? '⏳ 처리중...' : isMarketRunning ? '🛑 서버 중지' : '▶️ 서버 시작'}
             </button>
             <button
               onClick={() => { if(confirm('로그아웃 하시겠습니까?')) logout(); }}
@@ -178,9 +202,17 @@ const AdminPage: React.FC = () => {
             <h2 className="text-lg font-bold">
               📊 주가 서버 상태: {isMarketRunning ? <span className="text-green-400">운영 중</span> : <span className="text-red-400">중지됨</span>}
             </h2>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold ${isMarketRunning ? 'bg-green-600/30 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
-              {isMarketRunning ? '🟢 LIVE' : '⭕ OFF'}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`px-3 py-1 rounded-full text-xs font-bold ${isMarketRunning ? 'bg-green-600/30 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
+                {isMarketRunning ? '🟢 LIVE' : '⭕ OFF'}
+              </span>
+              <button
+                onClick={resetStockPrices}
+                className="px-3 py-1 bg-yellow-600 hover:bg-yellow-500 rounded text-xs font-bold transition-colors"
+              >
+                🔄 주가 초기화
+              </button>
+            </div>
           </div>
           
           {isMarketRunning && (
@@ -203,13 +235,23 @@ const AdminPage: React.FC = () => {
             </div>
           )}
           
-          {!isMarketRunning && (
-            <p className="text-gray-500 text-sm">
-              주가 서버를 시작하면 모든 유저에게 실시간으로 주가가 동기화됩니다.
-              <br />
-              서버가 중지되면 유저들은 마지막 저장된 주가를 사용합니다.
+          <div className="mt-4 p-3 bg-gray-800/50 rounded-lg">
+            <p className="text-gray-400 text-sm">
+              {isMarketRunning ? (
+                <>
+                  ✅ <strong>Cloud Functions</strong>가 10초마다 자동으로 주가를 업데이트합니다.
+                  <br />
+                  ✅ 관리자가 로그아웃해도 서버는 계속 작동합니다.
+                </>
+              ) : (
+                <>
+                  ⚠️ 서버가 중지되어 있습니다. 유저들은 마지막 저장된 주가를 봅니다.
+                  <br />
+                  💡 서버를 시작하면 모든 유저에게 실시간으로 주가가 동기화됩니다.
+                </>
+              )}
             </p>
-          )}
+          </div>
         </div>
 
         {/* 금액 지급 섹션 */}
@@ -228,7 +270,6 @@ const AdminPage: React.FC = () => {
                   type="text"
                   value={amount}
                   onChange={(e) => {
-                    // 숫자만 입력 허용하고 천단위 콤마 추가
                     const value = e.target.value.replace(/[^0-9-]/g, '');
                     if (value === '' || value === '-') {
                       setAmount(value);
@@ -255,7 +296,6 @@ const AdminPage: React.FC = () => {
               </button>
             </div>
             
-            {/* 빠른 금액 버튼 */}
             <div className="flex gap-2 mt-3">
               {[100000, 1000000, 10000000, 100000000].map((preset) => (
                 <button

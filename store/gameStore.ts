@@ -45,6 +45,13 @@ interface StockPriceData {
   };
 }
 
+// Firebase에서 받아오는 전체 주가 문서 타입
+interface StockPriceDocument {
+  prices: StockPriceData;
+  gameTick?: number;
+  currentDay?: number;
+}
+
 interface GameStore extends GameState {
   transactions: TransactionRecord[];
   realizedPnL: number;
@@ -55,7 +62,8 @@ interface GameStore extends GameState {
   getDataForFirebase: () => { cash: number; portfolio: { stockId: string; quantity: number; averagePrice: number }[]; gameTick: number };
   // 주가 Firebase 동기화
   getStockPricesForFirebase: () => StockPriceData;
-  loadStockPricesFromFirebase: (prices: StockPriceData) => void;
+  loadStockPricesFromFirebase: (data: StockPriceDocument) => void;
+  updateGameTick: (gameTick: number, currentDay: number) => void;
   addPendingOrder: (order: Omit<PendingOrder, 'id' | 'createdAt' | 'createdDay'>) => void;
   cancelPendingOrder: (orderId: string) => void;
   clearLatestNews: () => void;
@@ -441,8 +449,10 @@ export const useGameStore = create<GameStore>()(
       },
 
       // Firebase에서 로드한 주가 데이터를 적용
-      loadStockPricesFromFirebase: (prices: StockPriceData) => {
+      loadStockPricesFromFirebase: (data: StockPriceDocument) => {
         const { stocks } = get();
+        const prices = data.prices || data as unknown as StockPriceData; // 호환성을 위해
+        
         const updatedStocks = stocks.map(stock => {
           const priceData = prices[stock.id];
           if (priceData) {
@@ -457,8 +467,28 @@ export const useGameStore = create<GameStore>()(
           }
           return stock;
         });
-        set({ stocks: updatedStocks });
-        console.log('[GameStore] Stock prices loaded from Firebase');
+        
+        const updates: any = { stocks: updatedStocks };
+        
+        // gameTick과 currentDay도 업데이트 (서버에서 제공하는 경우)
+        if (data.gameTick !== undefined) {
+          updates.gameTick = data.gameTick;
+          updates.dayTickCount = data.gameTick % 1800; // TICKS_PER_DAY
+        }
+        if (data.currentDay !== undefined) {
+          updates.currentDay = data.currentDay;
+        }
+        
+        set(updates);
+        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay });
+      },
+
+      updateGameTick: (gameTick: number, currentDay: number) => {
+        set({ 
+          gameTick, 
+          currentDay,
+          dayTickCount: gameTick % 1800 // TICKS_PER_DAY
+        });
       },
 
       togglePlay: () => set((state) => ({ isPlaying: !state.isPlaying })),

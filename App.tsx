@@ -101,18 +101,16 @@ const NewsPopup: React.FC<NewsPopupProps> = ({ news, onClose }) => {
 
 const App: React.FC = () => {
   const { 
-    tick, 
     initialize, 
     loadFromFirebase, 
     loadStockPricesFromFirebase,
+    updateGameTick,
     cash, 
     portfolio, 
     stocks,
     gameTick,
     currentDay,
     currentPage,
-    marketStatus,
-    closingCountdown,
     latestNews,
     clearLatestNews,
     setPage
@@ -319,23 +317,14 @@ const App: React.FC = () => {
     }
   };
 
-  // Game Loop
+  // Game Loop - 주가는 서버(Cloud Functions)에서만 업데이트됨
   useEffect(() => {
     if (dataLoaded) {
       initialize();
     }
   }, [initialize, dataLoaded]);
 
-  // 실시간 모드: 항상 게임 실행
-  useEffect(() => {
-    let interval: number;
-    if (dataLoaded) {
-      interval = window.setInterval(() => {
-        tick();
-      }, 1000);
-    }
-    return () => window.clearInterval(interval);
-  }, [tick, dataLoaded]);
+  // 로컬 tick() 제거됨 - 주가는 Firebase에서 실시간 구독으로만 업데이트
 
   // Show loading while checking auth
   if (!isInitialized || authLoading) {
@@ -371,8 +360,8 @@ const App: React.FC = () => {
     );
   }
 
-  // 장 마감 오버레이
-  const showMarketClosedOverlay = marketStatus === 'CLOSED' && closingCountdown > 0;
+  // 장 마감 오버레이 - 서버에서 관리하므로 클라이언트에서는 표시하지 않음
+  // const showMarketClosedOverlay = marketStatus === 'CLOSED' && closingCountdown > 0;
 
   // 현재 페이지 렌더링
   const renderPage = () => {
@@ -425,22 +414,6 @@ const App: React.FC = () => {
 
       {/* 하단 네비게이션 */}
       <BottomNav />
-
-      {/* 장 마감 오버레이 */}
-      {showMarketClosedOverlay && (
-        <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center">
-          <div className="text-center p-8 bg-gray-900 rounded-2xl border border-gray-800 mx-4">
-            <div className="text-6xl mb-4">🔔</div>
-            <h2 className="text-2xl font-bold text-white mb-2">장 마감</h2>
-            <p className="text-gray-400 mb-4">다음 거래일까지 잠시 기다려주세요</p>
-            <div className="text-5xl font-bold text-orange-500">
-              {closingCountdown}
-              <span className="text-xl text-gray-500 ml-2">초</span>
-            </div>
-            <p className="text-sm text-gray-600 mt-4">전일 종가가 업데이트됩니다</p>
-          </div>
-        </div>
-      )}
 
       {/* 닉네임 설정 모달 */}
       {showNicknameModal && (

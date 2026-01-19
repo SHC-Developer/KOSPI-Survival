@@ -23,6 +23,13 @@ export interface StockPriceData {
   };
 }
 
+// Firebase에서 받아오는 전체 주가 문서 타입
+export interface StockPriceDocument {
+  prices: StockPriceData;
+  gameTick?: number;
+  currentDay?: number;
+}
+
 // 사용자 정보 타입
 export interface UserInfo {
   uid: string;
@@ -75,8 +82,12 @@ interface AuthState {
   
   // Stock price sync functions
   saveStockPrices: (prices: StockPriceData) => Promise<void>;
-  loadStockPrices: () => Promise<StockPriceData | null>;
-  subscribeToStockPrices: (callback: (prices: StockPriceData) => void) => () => void;
+  loadStockPrices: () => Promise<StockPriceDocument | null>;
+  subscribeToStockPrices: (callback: (data: StockPriceDocument) => void) => () => void;
+  
+  // Server status
+  getServerStatus: () => Promise<{ isRunning: boolean } | null>;
+  subscribeToServerStatus: (callback: (status: { isRunning: boolean }) => void) => () => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -444,7 +455,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (docSnap.exists()) {
         const data = docSnap.data();
         console.log('[Firebase] Stock prices loaded');
-        return data.prices as StockPriceData;
+        return {
+          prices: data.prices as StockPriceData,
+          gameTick: data.gameTick,
+          currentDay: data.currentDay
+        };
       }
       return null;
     } catch (error) {
@@ -454,19 +469,59 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   // 주가 데이터 실시간 구독
-  subscribeToStockPrices: (callback: (prices: StockPriceData) => void) => {
+  subscribeToStockPrices: (callback: (data: StockPriceDocument) => void) => {
     const stockPricesRef = doc(db, 'game', 'stockPrices');
     const unsubscribe = onSnapshot(
       stockPricesRef,
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          console.log('[Firebase] Stock prices update received');
-          callback(data.prices as StockPriceData);
+          console.log('[Firebase] Stock prices update received', { gameTick: data.gameTick, currentDay: data.currentDay });
+          callback({
+            prices: data.prices as StockPriceData,
+            gameTick: data.gameTick,
+            currentDay: data.currentDay
+          });
         }
       },
       (error) => {
         console.error('Stock prices sync error:', error);
+      }
+    );
+    
+    return unsubscribe;
+  },
+
+  // 서버 상태 가져오기
+  getServerStatus: async () => {
+    try {
+      const docSnap = await getDoc(doc(db, 'game', 'serverStatus'));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return { isRunning: data.isRunning || false };
+      }
+      return { isRunning: false };
+    } catch (error) {
+      console.error('Error getting server status:', error);
+      return null;
+    }
+  },
+
+  // 서버 상태 실시간 구독
+  subscribeToServerStatus: (callback: (status: { isRunning: boolean }) => void) => {
+    const serverStatusRef = doc(db, 'game', 'serverStatus');
+    const unsubscribe = onSnapshot(
+      serverStatusRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          callback({ isRunning: data.isRunning || false });
+        } else {
+          callback({ isRunning: false });
+        }
+      },
+      (error) => {
+        console.error('Server status sync error:', error);
       }
     );
     
