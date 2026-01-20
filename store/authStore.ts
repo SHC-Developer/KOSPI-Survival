@@ -40,6 +40,9 @@ export interface StockPriceDocument {
   isNewsPhase?: boolean;
   newsPhaseCountdown?: number;
   newsWarningActive?: boolean;
+  isMarketClosed?: boolean;
+  marketClosingMessage?: string | null;
+  dayProgress?: number;
 }
 
 // 뉴스 이벤트 타입
@@ -512,16 +515,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           console.log('[Firebase] Stock prices update received', { 
             gameTick: data.gameTick, 
             currentDay: data.currentDay,
-            isNewsPhase: data.isNewsPhase,
-            newsWarningActive: data.newsWarningActive
+            dayProgress: data.dayProgress,
+            isMarketClosed: data.isMarketClosed
           });
           callback({
             prices: data.prices as StockPriceData,
             gameTick: data.gameTick,
             currentDay: data.currentDay,
+            dayProgress: data.dayProgress,
             isNewsPhase: data.isNewsPhase,
             newsPhaseCountdown: data.newsPhaseCountdown,
-            newsWarningActive: data.newsWarningActive
+            newsWarningActive: data.newsWarningActive,
+            isMarketClosed: data.isMarketClosed,
+            marketClosingMessage: data.marketClosingMessage || null
           });
         }
       },
