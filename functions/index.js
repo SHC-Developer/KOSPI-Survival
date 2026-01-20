@@ -18,6 +18,12 @@ const DAILY_LOWER_LIMIT = 0.70;
 const MARKET_DURATION = 1800; // 30분 = 1800초 = 1일
 const NEWS_INTERVAL = 60; // 1분(60틱)마다 뉴스 이벤트
 
+// 거래정지 및 상장폐지 상수
+const TRADING_HALT_DURATION = 300; // 5분 = 300틱
+const DELISTING_PRICE = 500; // 상장폐지 가격 기준
+const DELISTING_WARNING_PRICE = 1000; // 상장폐지 위험 경고 가격 기준
+const RELISTING_DAYS = 7; // 재상장까지의 일수
+
 // 종목 설정 (4개: 대형주 2개 + 작전주 2개)
 const STOCK_CONFIGS = [
   { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03, jumpIntensity: 0.3 },
@@ -130,6 +136,15 @@ function getInitialPrices() {
       upperLimit: Math.round(config.initialPrice * DAILY_UPPER_LIMIT),
       lowerLimit: Math.round(config.initialPrice * DAILY_LOWER_LIMIT),
       trendNoise: (Math.random() - 0.5) * 2,
+      // 거래정지 관련
+      tradingHalted: false,
+      haltedUntilTick: null,
+      haltedAtTick: null, // 거래정지 시작 틱 (타이머 계산용)
+      haltReason: null, // 'upper' | 'lower' | null
+      // 상장폐지 관련
+      isDelisted: false,
+      delistedAtDay: null,
+      delistingWarning: false,
     };
   });
   return prices;
@@ -165,6 +180,10 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
     }
   }
   
+  // 3~5초 후 적용 (3~5틱 후)
+  const delayTicks = 3 + Math.floor(Math.random() * 3); // 3, 4, 5 중 랜덤
+  const applyAtTick = gameTick + delayTicks;
+  
   return {
     id: `news-${gameTick}-${config.id}`,
     time: gameTick,
@@ -178,6 +197,7 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
     jumpPercent: actualJumpPercent * 100,
     isFakeNews: isFakeNews,
     displayedEffect: isGood ? 'GOOD' : 'BAD',
+    applyAtTick: applyAtTick, // 몇 틱 후에 적용할지
   };
 }
 
@@ -213,13 +233,44 @@ async function runMarketLoop(loopId) {
     console.log(`=== [${loopId}] Day ${currentDay} Market Open ===`);
     STOCK_CONFIGS.forEach(config => {
       const stock = prices[config.id];
-      const newPrevClose = stock.currentPrice;
+      
+      // 상장폐지된 종목 재상장 체크 (7일 후)
+      if (stock.isDelisted && stock.delistedAtDay !== null) {
+        if (currentDay - stock.delistedAtDay >= RELISTING_DAYS) {
+          // 재상장: 초기 가격으로 복구
+          console.log(`[${loopId}] ${config.name} 재상장 (Day ${currentDay})`);
+          prices[config.id] = {
+            ...stock,
+            currentPrice: config.initialPrice,
+            previousClose: config.initialPrice,
+            openPrice: config.initialPrice,
+            upperLimit: Math.round(config.initialPrice * DAILY_UPPER_LIMIT),
+            lowerLimit: Math.round(config.initialPrice * DAILY_LOWER_LIMIT),
+            isDelisted: false,
+            delistedAtDay: null,
+            delistingWarning: false,
+            tradingHalted: false,
+            haltedUntilTick: null,
+            haltedAtTick: null,
+            haltReason: null,
+            trendNoise: (Math.random() - 0.5) * 2,
+          };
+          return;
+        }
+      }
+      
+      // 새로운 날 시작 시 거래정지 해제 및 상하한가 리셋
+      const newPrevClose = stock.isDelisted ? stock.currentPrice : stock.currentPrice;
       prices[config.id] = {
         ...stock,
         previousClose: newPrevClose,
-        openPrice: newPrevClose,
-        upperLimit: Math.round(newPrevClose * DAILY_UPPER_LIMIT),
-        lowerLimit: Math.round(newPrevClose * DAILY_LOWER_LIMIT),
+        openPrice: stock.isDelisted ? stock.currentPrice : newPrevClose,
+        upperLimit: stock.isDelisted ? stock.upperLimit : Math.round(newPrevClose * DAILY_UPPER_LIMIT),
+        lowerLimit: stock.isDelisted ? stock.lowerLimit : Math.round(newPrevClose * DAILY_LOWER_LIMIT),
+        tradingHalted: false, // 새로운 날 시작 시 거래정지 해제
+        haltedUntilTick: null,
+        haltedAtTick: null,
+        haltReason: null,
         trendNoise: (Math.random() - 0.5) * 2,
       };
     });
@@ -268,29 +319,44 @@ async function runMarketLoop(loopId) {
           return generateNewsEvent(stock, config, gameTick, currentDay);
         });
         
-        // 뉴스 저장
+        // 뉴스 저장 (즉시 반영하지 않고 applyAtTick에 저장)
         await db.doc('game/newsEvents').set({
           events: newsEvents,
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
-        // 뉴스 점프 적용
-        newsEvents.forEach(news => {
-          const config = STOCK_CONFIGS.find(c => c.id === news.targetStockId);
-          if (config) {
-            const stock = prices[config.id];
-            const newPrice = applyNewsJump(stock, news.jumpPercent);
-            prices[config.id] = {
-              ...stock,
-              currentPrice: newPrice,
-            };
-          }
-        });
+        // 뉴스 점프는 applyAtTick에 도달했을 때 적용 (아래에서 처리)
       }
       
-      // 주가 업데이트
+      // 1. 먼저 기본 OU 프로세스 주가 업데이트
       STOCK_CONFIGS.forEach(config => {
         const stock = prices[config.id];
+        
+        // 상장폐지된 종목은 업데이트 안함 (가격 고정)
+        if (stock.isDelisted) {
+          return;
+        }
+        
+        // 거래정지 해제 체크
+        let tradingHalted = stock.tradingHalted || false;
+        let haltedUntilTick = stock.haltedUntilTick || null;
+        let haltedAtTick = stock.haltedAtTick || null;
+        let haltReason = stock.haltReason || null;
+        
+        if (tradingHalted && haltedUntilTick !== null && gameTick >= haltedUntilTick) {
+          // 거래정지 해제
+          console.log(`[${loopId}] ${config.name} 거래정지 해제 (tick ${gameTick})`);
+          tradingHalted = false;
+          haltedUntilTick = null;
+          haltedAtTick = null;
+          haltReason = null;
+        }
+        
+        // 거래정지 중이면 가격 변동 없음
+        if (tradingHalted) {
+          return;
+        }
+        
         const newPrice = updatePriceOU(stock, config);
         
         let newTrendNoise = stock.trendNoise || 0;
@@ -299,12 +365,152 @@ async function runMarketLoop(loopId) {
           newTrendNoise = newTrendNoise * 0.3 + targetTrend * 0.7;
         }
         
+        let finalPrice = newPrice;
+        
+        // 상장폐지 위험 경고 체크 (1000원 이하)
+        let delistingWarning = finalPrice <= DELISTING_WARNING_PRICE && finalPrice > DELISTING_PRICE;
+        
+        // 상장폐지 체크 (500원 미만)
+        let isDelisted = false;
+        let delistedAtDay = stock.delistedAtDay || null;
+        
+        if (finalPrice < DELISTING_PRICE) {
+          if (!stock.isDelisted) {
+            console.log(`[${loopId}] ${config.name} 상장폐지 (가격: ${finalPrice.toFixed(0)}원, Day ${currentDay})`);
+            isDelisted = true;
+            delistedAtDay = currentDay;
+          }
+          finalPrice = DELISTING_PRICE; // 최종 가격은 500원으로 고정
+        }
+        
+        // 상/하한가 도달 체크 (상장폐지되지 않은 경우만)
+        if (!isDelisted && !stock.isDelisted) {
+          if (finalPrice >= stock.upperLimit) {
+            finalPrice = stock.upperLimit;
+            // 상한가 도달 시 5분 거래정지
+            if (!tradingHalted) {
+              tradingHalted = true;
+              haltedUntilTick = gameTick + TRADING_HALT_DURATION;
+              haltedAtTick = gameTick;
+              haltReason = 'upper';
+              console.log(`[${loopId}] ${config.name} 상한가 도달 - 5분 거래정지 (tick ${gameTick})`);
+            }
+          } else if (finalPrice <= stock.lowerLimit) {
+            finalPrice = stock.lowerLimit;
+            // 하한가 도달 시 5분 거래정지
+            if (!tradingHalted) {
+              tradingHalted = true;
+              haltedUntilTick = gameTick + TRADING_HALT_DURATION;
+              haltedAtTick = gameTick;
+              haltReason = 'lower';
+              console.log(`[${loopId}] ${config.name} 하한가 도달 - 5분 거래정지 (tick ${gameTick})`);
+            }
+          }
+        }
+        
         prices[config.id] = {
           ...stock,
-          currentPrice: newPrice,
+          currentPrice: finalPrice,
           trendNoise: newTrendNoise,
+          tradingHalted: tradingHalted,
+          haltedUntilTick: haltedUntilTick,
+          haltedAtTick: haltedAtTick,
+          haltReason: haltReason,
+          isDelisted: isDelisted || stock.isDelisted,
+          delistedAtDay: delistedAtDay || stock.delistedAtDay,
+          delistingWarning: delistingWarning,
         };
       });
+      
+      // 2. 3~5초 지연 후 적용할 뉴스 점프 체크 (OU 업데이트 후 최종 가격에 적용)
+      const newsDoc = await db.doc('game/newsEvents').get();
+      if (newsDoc.exists) {
+        const allNewsEvents = newsDoc.data().events || [];
+        const pendingJumps = allNewsEvents.filter(news => 
+          news.applyAtTick === gameTick && !news.jumpApplied
+        );
+        
+        if (pendingJumps.length > 0) {
+          console.log(`[${loopId}] Applying ${pendingJumps.length} news jumps at tick ${gameTick} (3~5초 지연 후)`);
+          
+          // 뉴스 점프 적용 (OU 업데이트된 가격 기준)
+          pendingJumps.forEach(news => {
+            const config = STOCK_CONFIGS.find(c => c.id === news.targetStockId);
+            if (config) {
+              const stock = prices[config.id];
+              
+              // 상장폐지되었거나 거래정지 중이면 뉴스 점프 적용 안함
+              if (stock.isDelisted || stock.tradingHalted) {
+                return;
+              }
+              
+              const newPrice = applyNewsJump(stock, news.jumpPercent);
+              
+              // 뉴스 점프 후 상/하한가 체크
+              let finalPrice = newPrice;
+              let tradingHalted = stock.tradingHalted || false;
+              let haltedUntilTick = stock.haltedUntilTick || null;
+              let haltedAtTick = stock.haltedAtTick || null;
+              let haltReason = stock.haltReason || null;
+              
+              if (finalPrice >= stock.upperLimit) {
+                finalPrice = stock.upperLimit;
+                if (!tradingHalted) {
+                  tradingHalted = true;
+                  haltedUntilTick = gameTick + TRADING_HALT_DURATION;
+                  haltedAtTick = gameTick;
+                  haltReason = 'upper';
+                  console.log(`[${loopId}] ${config.name} 뉴스 후 상한가 도달 - 5분 거래정지`);
+                }
+              } else if (finalPrice <= stock.lowerLimit) {
+                finalPrice = stock.lowerLimit;
+                if (!tradingHalted) {
+                  tradingHalted = true;
+                  haltedUntilTick = gameTick + TRADING_HALT_DURATION;
+                  haltedAtTick = gameTick;
+                  haltReason = 'lower';
+                  console.log(`[${loopId}] ${config.name} 뉴스 후 하한가 도달 - 5분 거래정지`);
+                }
+              }
+              
+              // 상장폐지 체크
+              let isDelisted = stock.isDelisted || false;
+              let delistedAtDay = stock.delistedAtDay || null;
+              let delistingWarning = finalPrice <= DELISTING_WARNING_PRICE && finalPrice > DELISTING_PRICE;
+              
+              if (finalPrice < DELISTING_PRICE && !isDelisted) {
+                isDelisted = true;
+                delistedAtDay = currentDay;
+                finalPrice = DELISTING_PRICE;
+                console.log(`[${loopId}] ${config.name} 뉴스 후 상장폐지 (가격: ${finalPrice.toFixed(0)}원)`);
+              }
+              
+              prices[config.id] = {
+                ...stock,
+                currentPrice: finalPrice,
+                tradingHalted: tradingHalted,
+                haltedUntilTick: haltedUntilTick,
+                haltedAtTick: haltedAtTick,
+                haltReason: haltReason,
+                isDelisted: isDelisted,
+                delistedAtDay: delistedAtDay,
+                delistingWarning: delistingWarning,
+              };
+            }
+          });
+          
+          // 적용 완료 표시
+          const updatedEvents = allNewsEvents.map(news => 
+            pendingJumps.some(p => p.id === news.id)
+              ? { ...news, jumpApplied: true }
+              : news
+          );
+          
+          await db.doc('game/newsEvents').update({
+            events: updatedEvents
+          });
+        }
+      }
       
       gameTick++;
       

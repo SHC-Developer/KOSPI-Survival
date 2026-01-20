@@ -20,6 +20,15 @@ export interface StockPriceData {
     openPrice: number;
     upperLimit: number;
     lowerLimit: number;
+    // 거래정지 관련
+    tradingHalted?: boolean;
+    haltedUntilTick?: number | null;
+    haltedAtTick?: number | null;
+    haltReason?: 'upper' | 'lower' | null;
+    // 상장폐지 관련
+    isDelisted?: boolean;
+    delistedAtDay?: number | null;
+    delistingWarning?: boolean;
   };
 }
 
