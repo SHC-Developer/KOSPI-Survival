@@ -720,10 +720,10 @@ exports.updateStockPrices = onSchedule({
   }
 });
 
-// 서버 시작/중지 (Admin용) - 시작 시 즉시 30분 루프 실행
+// 서버 시작/중지 (Admin용) - 시작 시 연속 루프 실행
 exports.toggleServer = onCall({
   region: "asia-northeast3",
-  timeoutSeconds: 2100, // 35분 (HTTP callable은 최대 60분 지원)
+  timeoutSeconds: 3600, // 60분 (HTTP callable 최대 timeout)
   memory: "512MiB",
 }, async (request) => {
   // 인증 확인
@@ -765,20 +765,62 @@ exports.toggleServer = onCall({
       });
     }
     
-    console.log(`[toggleServer] Starting market loop: ${loopId}`);
+    console.log(`[toggleServer] Starting continuous market loop: ${loopId}`);
     
-    // 30분 루프 즉시 시작 (비동기로 실행하되 함수는 계속 실행됨)
-    // 중요: 여기서 await를 사용하면 30분 동안 응답이 안 감
-    // 대신 Promise를 시작하고 응답을 먼저 보낸 후 루프 실행
+    // 연속 실행 루프: 서버가 켜져 있는 동안 계속 실행
+    // 하루(30분) → 휴장(3분) → 다음 하루(30분) → 휴장(3분) → ...
+    const CLOSING_DURATION = 180; // 휴장 시간 3분 = 180초
+    let dayCount = 0;
+    const MAX_DAYS = 60; // 안전장치: 최대 60일 (약 33시간)
     
-    // 참고: Firebase Functions에서는 응답을 보내면 함수가 종료됨
-    // 따라서 루프를 완전히 실행하려면 응답을 보내지 않고 기다려야 함
-    // 클라이언트는 응답을 기다리지 않도록 수정해야 함
+    while (dayCount < MAX_DAYS) {
+      // 서버 상태 확인
+      const statusDoc = await db.doc('game/serverStatus').get();
+      const statusData = statusDoc.exists ? statusDoc.data() : { isRunning: false };
+      
+      // 서버가 중지되었거나 다른 루프가 시작되면 종료
+      if (!statusData.isRunning || statusData.currentLoopId !== loopId) {
+        console.log(`[toggleServer] Loop ${loopId} terminated: isRunning=${statusData.isRunning}, currentLoopId=${statusData.currentLoopId}`);
+        break;
+      }
+      
+      // 하루(30분) 마켓 루프 실행
+      dayCount++;
+      console.log(`[toggleServer] Day ${dayCount} starting...`);
+      await runMarketLoop(loopId);
+      
+      // 다시 서버 상태 확인
+      const statusDoc2 = await db.doc('game/serverStatus').get();
+      const statusData2 = statusDoc2.exists ? statusDoc2.data() : { isRunning: false };
+      
+      if (!statusData2.isRunning || statusData2.currentLoopId !== loopId) {
+        console.log(`[toggleServer] Loop ${loopId} terminated after day ${dayCount}`);
+        break;
+      }
+      
+      // 휴장 시간 대기 (3분) - 카운트다운 표시
+      console.log(`[toggleServer] Market closed. Waiting ${CLOSING_DURATION}s for next day...`);
+      
+      for (let countdown = CLOSING_DURATION; countdown > 0; countdown -= 10) {
+        // 10초마다 카운트다운 업데이트
+        await db.doc('game/stockPrices').update({
+          marketClosingMessage: `📢 장이 마감되었습니다. ${countdown}초 후 다음 장이 개장합니다.`,
+        });
+        
+        // 서버 상태 확인 (종료 요청이 있으면 루프 탈출)
+        const checkDoc = await db.doc('game/serverStatus').get();
+        const checkData = checkDoc.exists ? checkDoc.data() : { isRunning: false };
+        if (!checkData.isRunning || checkData.currentLoopId !== loopId) {
+          console.log(`[toggleServer] Loop ${loopId} terminated during closing`);
+          return { success: true, message: 'Server stopped during market closing', loopId };
+        }
+        
+        await sleep(Math.min(10, countdown) * 1000);
+      }
+    }
     
-    // 루프 실행 (await 사용 - 30분 동안 실행)
-    await runMarketLoop(loopId);
-    
-    return { success: true, message: 'Server started and market loop completed', loopId };
+    console.log(`[toggleServer] Loop ${loopId} ended after ${dayCount} days`);
+    return { success: true, message: `Market loop completed after ${dayCount} days`, loopId };
     
   } else if (action === 'stop') {
     // 서버 중지
