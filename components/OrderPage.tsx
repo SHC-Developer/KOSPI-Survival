@@ -6,6 +6,23 @@ import { KRW } from './Formatters';
 // 거래 수수료율 (0.1%)
 const TRANSACTION_FEE_RATE = 0.001;
 
+// 호가 단위 계산 (functions/index.js와 동일)
+const getTickSize = (price: number): number => {
+  if (price >= 500000) return 1000;
+  if (price >= 100000) return 500;
+  if (price >= 50000) return 100;
+  if (price >= 10000) return 50;
+  if (price >= 5000) return 10;
+  if (price >= 1000) return 5;
+  return 1;
+};
+
+// 호가 반올림
+const roundToTickSize = (price: number): number => {
+  const tickSize = getTickSize(price);
+  return Math.round(price / tickSize) * tickSize;
+};
+
 const OrderPage: React.FC = () => {
   const { 
     stocks, 
@@ -291,7 +308,11 @@ const OrderPage: React.FC = () => {
             </label>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setLimitPrice(Math.max(0, limitPrice - 100))}
+                onClick={() => {
+                  const tickSize = getTickSize(limitPrice);
+                  const newPrice = roundToTickSize(Math.max(0, limitPrice - tickSize));
+                  setLimitPrice(newPrice);
+                }}
                 className="w-12 h-12 bg-gray-800 rounded-lg text-xl text-gray-300 hover:bg-gray-700"
               >
                 -
@@ -300,13 +321,21 @@ const OrderPage: React.FC = () => {
                 <input
                   type="number"
                   value={limitPrice}
-                  onChange={(e) => setLimitPrice(Number(e.target.value))}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    const rounded = roundToTickSize(value);
+                    setLimitPrice(rounded);
+                  }}
                   className="bg-transparent text-center text-white font-bold text-lg w-full h-full outline-none"
                 />
                 <span className="absolute right-4 text-gray-500 text-sm">원</span>
               </div>
               <button
-                onClick={() => setLimitPrice(limitPrice + 100)}
+                onClick={() => {
+                  const tickSize = getTickSize(limitPrice);
+                  const newPrice = roundToTickSize(limitPrice + tickSize);
+                  setLimitPrice(newPrice);
+                }}
                 className="w-12 h-12 bg-gray-800 rounded-lg text-xl text-gray-300 hover:bg-gray-700"
               >
                 +

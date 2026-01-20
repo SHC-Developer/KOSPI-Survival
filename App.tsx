@@ -210,6 +210,7 @@ const App: React.FC = () => {
   const [nicknameInput, setNicknameInput] = useState('');
   const [nicknameError, setNicknameError] = useState('');
   const [currentUserNickname, setCurrentUserNickname] = useState<string | null>(null);
+  const shownNewsIdsRef = useRef<Set<string>>(new Set());
   
   const { 
     user, 
@@ -400,9 +401,12 @@ const App: React.FC = () => {
     }
   }, [user]);
 
-  // 새 뉴스가 발생하면 팝업 스택에 추가
+  // 새 뉴스가 발생하면 팝업 스택에 추가 (중복 방지)
   useEffect(() => {
-    if (latestNews) {
+    if (latestNews && !shownNewsIdsRef.current.has(latestNews.id)) {
+      // 이미 표시한 뉴스가 아니면 팝업 추가
+      shownNewsIdsRef.current.add(latestNews.id);
+      
       const newPopup: PopupItem = {
         id: `news-${latestNews.id}-${Date.now()}`,
         type: 'news',
@@ -411,6 +415,12 @@ const App: React.FC = () => {
       };
       setPopupStack(prev => [newPopup, ...prev].slice(0, 5)); // 최대 5개까지
       clearLatestNews();
+      
+      // 메모리 절약을 위해 오래된 뉴스 ID 제거 (100개 이상일 때)
+      if (shownNewsIdsRef.current.size > 100) {
+        const idsArray = Array.from(shownNewsIdsRef.current);
+        shownNewsIdsRef.current = new Set(idsArray.slice(-50)); // 최근 50개만 유지
+      }
     }
   }, [latestNews, clearLatestNews]);
 

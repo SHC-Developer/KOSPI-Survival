@@ -268,8 +268,8 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
     }
   }
   
-  // 3~5초 후 적용 (3~5틱 후)
-  const delayTicks = 3 + Math.floor(Math.random() * 3); // 3, 4, 5 중 랜덤
+  // 7~10초 후 적용 (7~10틱 후)
+  const delayTicks = 7 + Math.floor(Math.random() * 4); // 7, 8, 9, 10 중 랜덤
   const applyAtTick = gameTick + delayTicks;
   
   return {
@@ -439,12 +439,22 @@ async function runMarketLoop(loopId) {
         let haltReason = stock.haltReason || null;
         
         if (tradingHalted && haltedUntilTick !== null && gameTick >= haltedUntilTick) {
-          // 거래정지 해제
-          console.log(`[${loopId}] ${config.name} 거래정지 해제 (tick ${gameTick})`);
-          tradingHalted = false;
-          haltedUntilTick = null;
-          haltedAtTick = null;
-          haltReason = null;
+          // 거래정지 해제 시 전일 종가를 현재가로 업데이트 (전일대비 % 초기화)
+          const currentPrice = stock.currentPrice;
+          console.log(`[${loopId}] ${config.name} 거래정지 해제 (tick ${gameTick}) - 전일 종가 업데이트: ${currentPrice}원`);
+          
+          prices[config.id] = {
+            ...stock,
+            previousClose: currentPrice, // 전일 종가를 현재가로 업데이트
+            openPrice: currentPrice, // 시가도 현재가로 업데이트
+            tradingHalted: false,
+            haltedUntilTick: null,
+            haltedAtTick: null,
+            haltReason: null,
+          };
+          
+          // 이미 업데이트했으므로 루프 계속
+          return;
         }
         
         // 거래정지 중이면 가격 변동 없음
