@@ -39,64 +39,147 @@ const CloseIcon = () => (
   </svg>
 );
 
-// 뉴스 팝업 컴포넌트
-interface NewsPopupProps {
-  news: NewsEvent;
-  onClose: () => void;
+// 팝업 타입 정의
+type PopupType = 'news' | 'order';
+
+interface PopupItem {
+  id: string;
+  type: PopupType;
+  data: any;
+  timestamp: number;
 }
 
-const NewsPopup: React.FC<NewsPopupProps> = ({ news, onClose }) => {
+// 알림 팝업 컴포넌트 (뉴스, 주문 체결 등)
+interface AlertPopupProps {
+  popup: PopupItem;
+  index: number;
+  onClose: (id: string) => void;
+}
+
+const AlertPopup: React.FC<AlertPopupProps> = ({ popup, index, onClose }) => {
   useEffect(() => {
     const timer = setTimeout(() => {
-      onClose();
+      onClose(popup.id);
     }, 5000);
     return () => clearTimeout(timer);
-  }, [news.id, onClose]);
+  }, [popup.id, onClose]);
 
-  const isGood = news.effect === 'GOOD';
-  
-  return (
-    <div className={`fixed top-14 left-0 right-0 z-[60] flex justify-center px-4 animate-slide-down`}>
-      <div className={`max-w-lg w-full rounded-lg shadow-2xl border ${
-        isGood 
-          ? 'bg-gradient-to-r from-red-900/95 to-red-800/95 border-red-600' 
-          : 'bg-gradient-to-r from-blue-900/95 to-blue-800/95 border-blue-600'
-      } backdrop-blur`}>
-        <div className="p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`text-lg ${isGood ? '📈' : '📉'}`}>
-                  {isGood ? '📈' : '📉'}
-                </span>
-                <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                  isGood ? 'bg-red-500/30 text-red-300' : 'bg-blue-500/30 text-blue-300'
-                }`}>
-                  {isGood ? '호재' : '악재'}
-                </span>
-                <span className="text-xs text-gray-400">방금 전</span>
+  // 스택 효과: 아래로 갈수록 offset
+  const topOffset = 56 + (index * 8); // 14px * 4 = 56px 기본 + 8px씩 아래로
+  const scale = 1 - (index * 0.03);
+  const opacity = 1 - (index * 0.1);
+
+  if (popup.type === 'news') {
+    const news = popup.data as NewsEvent;
+    const isGood = news.effect === 'GOOD';
+    
+    return (
+      <div 
+        className="fixed left-0 right-0 z-[60] flex justify-center px-4 animate-slide-down transition-all duration-300"
+        style={{ 
+          top: `${topOffset}px`,
+          transform: `scale(${scale})`,
+          opacity: opacity,
+          zIndex: 60 - index
+        }}
+      >
+        <div className={`max-w-lg w-full rounded-lg shadow-2xl border ${
+          isGood 
+            ? 'bg-gradient-to-r from-red-900/95 to-red-800/95 border-red-600' 
+            : 'bg-gradient-to-r from-blue-900/95 to-blue-800/95 border-blue-600'
+        } backdrop-blur`}>
+          <div className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">{isGood ? '📈' : '📉'}</span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                    isGood ? 'bg-red-500/30 text-red-300' : 'bg-blue-500/30 text-blue-300'
+                  }`}>
+                    {isGood ? '호재' : '악재'}
+                  </span>
+                  <span className="text-xs text-gray-400">방금 전</span>
+                </div>
+                <p className="text-white font-medium text-sm">{news.title}</p>
+                <p className="text-gray-300 text-xs mt-1">{news.description}</p>
               </div>
-              <p className="text-white font-medium text-sm">{news.title}</p>
-              <p className="text-gray-300 text-xs mt-1">{news.description}</p>
+              <button 
+                onClick={() => onClose(popup.id)}
+                className="p-1.5 hover:bg-white/10 rounded-full transition-colors text-gray-400 hover:text-white"
+              >
+                <CloseIcon />
+              </button>
             </div>
-            <button 
-              onClick={onClose}
-              className="p-1.5 hover:bg-white/10 rounded-full transition-colors text-gray-400 hover:text-white"
-            >
-              <CloseIcon />
-            </button>
-          </div>
-          {/* 5초 진행 바 */}
-          <div className="mt-3 h-1 bg-gray-700 rounded-full overflow-hidden">
-            <div 
-              className={`h-full ${isGood ? 'bg-red-500' : 'bg-blue-500'} animate-progress`}
-              style={{ animation: 'progress 5s linear forwards' }}
-            />
+            <div className="mt-3 h-1 bg-gray-700 rounded-full overflow-hidden">
+              <div 
+                className={`h-full ${isGood ? 'bg-red-500' : 'bg-blue-500'}`}
+                style={{ animation: 'progress 5s linear forwards' }}
+              />
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  // 주문 체결 팝업
+  if (popup.type === 'order') {
+    const order = popup.data as { stockName: string; side: 'buy' | 'sell'; quantity: number; price: number };
+    const isBuy = order.side === 'buy';
+    
+    return (
+      <div 
+        className="fixed left-0 right-0 z-[60] flex justify-center px-4 animate-slide-down transition-all duration-300"
+        style={{ 
+          top: `${topOffset}px`,
+          transform: `scale(${scale})`,
+          opacity: opacity,
+          zIndex: 60 - index
+        }}
+      >
+        <div className={`max-w-lg w-full rounded-lg shadow-2xl border ${
+          isBuy 
+            ? 'bg-gradient-to-r from-red-900/95 to-red-800/95 border-red-600' 
+            : 'bg-gradient-to-r from-blue-900/95 to-blue-800/95 border-blue-600'
+        } backdrop-blur`}>
+          <div className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">{isBuy ? '🔔' : '🔔'}</span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                    isBuy ? 'bg-red-500/30 text-red-300' : 'bg-blue-500/30 text-blue-300'
+                  }`}>
+                    예약 주문 체결
+                  </span>
+                </div>
+                <p className="text-white font-medium text-sm">
+                  {order.stockName} {order.quantity}주 {isBuy ? '매수' : '매도'} 완료
+                </p>
+                <p className="text-gray-300 text-xs mt-1">
+                  체결가: {order.price.toLocaleString()}원 | 총액: {(order.price * order.quantity).toLocaleString()}원
+                </p>
+              </div>
+              <button 
+                onClick={() => onClose(popup.id)}
+                className="p-1.5 hover:bg-white/10 rounded-full transition-colors text-gray-400 hover:text-white"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="mt-3 h-1 bg-gray-700 rounded-full overflow-hidden">
+              <div 
+                className={`h-full ${isBuy ? 'bg-red-500' : 'bg-blue-500'}`}
+                style={{ animation: 'progress 5s linear forwards' }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 };
 
 const App: React.FC = () => {
@@ -117,13 +200,16 @@ const App: React.FC = () => {
     setPage,
     isMarketClosed,
     marketClosingMessage,
-    dayProgress
+    dayProgress,
+    pendingOrders
   } = useGameStore();
   
-  const [showNewsPopup, setShowNewsPopup] = useState<NewsEvent | null>(null);
+  const [popupStack, setPopupStack] = useState<PopupItem[]>([]);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [nicknameInput, setNicknameInput] = useState('');
   const [nicknameError, setNicknameError] = useState('');
+  const [currentUserNickname, setCurrentUserNickname] = useState<string | null>(null);
+  const prevPendingOrdersRef = useRef<typeof pendingOrders>([]);
   
   const { 
     user, 
@@ -167,18 +253,23 @@ const App: React.FC = () => {
           });
           loadFromFirebase(data.cash, data.portfolio, data.gameTick);
           
-          // 신규 가입자 또는 닉네임이 없으면 닉네임 설정 모달 표시
-          // nickname이 null, undefined, 또는 빈 문자열인 경우에만 모달 표시
+          // 닉네임 저장
           const hasNickname = data.nickname && typeof data.nickname === 'string' && data.nickname.trim().length > 0;
-          console.log('[App] Has nickname:', hasNickname, 'Value:', data.nickname);
+          if (hasNickname) {
+            setCurrentUserNickname(data.nickname!);
+          }
           
-          if (!hasNickname) {
-            console.log('[App] No nickname found, showing modal');
+          // 신규 가입자만 닉네임 설정 모달 표시 (기존 유저는 표시하지 않음)
+          // createdAt이 없거나 닉네임이 없는 "신규" 유저만 표시
+          const isNewUser = !data.lastUpdated || (Date.now() - new Date(data.lastUpdated).getTime() < 60000);
+          
+          if (!hasNickname && isNewUser) {
+            console.log('[App] New user without nickname, showing modal');
             setShowNicknameModal(true);
           }
         } else {
           console.log('[App] No data found in Firebase, using defaults');
-          // 데이터가 없는 경우도 닉네임 설정 필요
+          // 신규 유저: 닉네임 설정 필요
           setShowNicknameModal(true);
         }
         
@@ -309,18 +400,54 @@ const App: React.FC = () => {
     }
   }, [user]);
 
-  // 새 뉴스가 발생하면 팝업 표시
+  // 새 뉴스가 발생하면 팝업 스택에 추가
   useEffect(() => {
     if (latestNews) {
-      setShowNewsPopup(latestNews);
+      const newPopup: PopupItem = {
+        id: `news-${latestNews.id}-${Date.now()}`,
+        type: 'news',
+        data: latestNews,
+        timestamp: Date.now()
+      };
+      setPopupStack(prev => [newPopup, ...prev].slice(0, 5)); // 최대 5개까지
+      clearLatestNews();
     }
-  }, [latestNews]);
+  }, [latestNews, clearLatestNews]);
+
+  // 예약 주문 체결 감지
+  useEffect(() => {
+    const prevOrders = prevPendingOrdersRef.current;
+    
+    // 이전에 있던 주문이 현재 없어졌으면 체결된 것
+    prevOrders.forEach(prevOrder => {
+      const stillExists = pendingOrders.some(o => o.id === prevOrder.id);
+      if (!stillExists) {
+        // 체결된 주문 찾기
+        const stock = stocks.find(s => s.id === prevOrder.stockId);
+        if (stock) {
+          const orderPopup: PopupItem = {
+            id: `order-${prevOrder.id}-${Date.now()}`,
+            type: 'order',
+            data: {
+              stockName: stock.name,
+              side: prevOrder.side,
+              quantity: prevOrder.quantity,
+              price: stock.currentPrice
+            },
+            timestamp: Date.now()
+          };
+          setPopupStack(prev => [orderPopup, ...prev].slice(0, 5));
+        }
+      }
+    });
+    
+    prevPendingOrdersRef.current = pendingOrders;
+  }, [pendingOrders, stocks]);
   
   // 팝업 닫기 핸들러
-  const handleCloseNewsPopup = useCallback(() => {
-    setShowNewsPopup(null);
-    clearLatestNews();
-  }, [clearLatestNews]);
+  const handleClosePopup = useCallback((id: string) => {
+    setPopupStack(prev => prev.filter(p => p.id !== id));
+  }, []);
 
   // 닉네임 설정 핸들러
   const handleSetNickname = async () => {
@@ -342,6 +469,7 @@ const App: React.FC = () => {
     
     const success = await updateNickname(nicknameInput.trim());
     if (success) {
+      setCurrentUserNickname(nicknameInput.trim());
       setShowNicknameModal(false);
       setNicknameInput('');
       setNicknameError('');
@@ -436,10 +564,15 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 뉴스 팝업 (상단에 알림 형태로 표시) */}
-      {showNewsPopup && (
-        <NewsPopup news={showNewsPopup} onClose={handleCloseNewsPopup} />
-      )}
+      {/* 알림 팝업 스택 (뉴스, 주문 체결 등) */}
+      {popupStack.map((popup, index) => (
+        <AlertPopup 
+          key={popup.id} 
+          popup={popup} 
+          index={index} 
+          onClose={handleClosePopup} 
+        />
+      ))}
       
       {/* 상단 컨트롤 바 */}
       <div className="fixed top-0 left-0 right-0 z-50 bg-gray-900/95 backdrop-blur border-b border-gray-800 safe-area-top">
@@ -466,6 +599,13 @@ const App: React.FC = () => {
             )}
             {isMarketClosed && (
               <span className="text-xs text-orange-400 animate-pulse">휴장 중</span>
+            )}
+            
+            {/* 닉네임 표시 */}
+            {currentUserNickname && (
+              <span className="text-xs text-gray-400 max-w-[80px] truncate" title={currentUserNickname}>
+                {currentUserNickname}
+              </span>
             )}
             
             <button 

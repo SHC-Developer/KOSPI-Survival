@@ -35,31 +35,119 @@ const STOCK_CONFIGS = [
 // 가짜 뉴스 확률 (30%)
 const FAKE_NEWS_PROBABILITY = 0.3;
 
-// 뉴스 템플릿
+// 뉴스 템플릿 (호재 50개, 악재 50개)
 const NEWS_TEMPLATES = {
   GOOD: [
+    // 실적 관련
     "{name}, 분기 실적 예상치 크게 상회",
+    "{name}, 연간 매출 사상 최고치 경신",
+    "{name}, 영업이익률 두 자릿수 달성",
+    "{name}, 흑자 전환 성공",
+    "{name}, 순이익 전년 대비 50% 증가",
+    // 수주/계약 관련
     "{name}, 대규모 수주 계약 체결",
+    "{name}, 글로벌 기업과 전략적 파트너십 체결",
+    "{name}, 정부 대형 프로젝트 수주",
+    "{name}, 장기 공급 계약 연장 성공",
+    "{name}, 신규 대형 고객사 확보",
+    // 신사업/확장 관련
     "{name}, 신규 사업 진출 발표",
+    "{name}, 해외 진출 성공",
+    "{name}, 신공장 착공식 개최",
+    "{name}, 자회사 설립 추진",
+    "{name}, 신규 생산라인 가동 시작",
+    // 기관/외국인 관련
     "{name}, 기관 매수세 급증",
     "{name}, 외국인 대량 매수 포착",
+    "{name}, 연기금 신규 편입",
+    "{name}, 글로벌 투자자 러브콜",
+    "{name}, 패시브 펀드 편입 확정",
+    // 정책/지원 관련
     "{name}, 정부 지원 사업 선정",
+    "{name}, 규제 완화 수혜 기대",
+    "{name}, 세제 혜택 대상 선정",
+    "{name}, 국책 사업 참여 확정",
+    "{name}, ESG 우수기업 선정",
+    // 기술/특허 관련
     "{name}, 신기술 특허 취득",
-    "{name}, 해외 진출 성공",
+    "{name}, 핵심 기술 개발 성공",
+    "{name}, 차세대 제품 개발 완료",
+    "{name}, 원천기술 확보",
+    "{name}, 기술 수출 계약 체결",
+    // 배당/주주환원 관련
     "{name}, 배당금 대폭 인상 예고",
+    "{name}, 자사주 매입 발표",
+    "{name}, 무상증자 결정",
+    "{name}, 주주환원정책 강화",
+    "{name}, 특별배당 실시 발표",
+    // M&A/투자 관련
     "{name}, M&A 성사 임박",
+    "{name}, 유망 스타트업 인수",
+    "{name}, 대규모 투자 유치 성공",
+    "{name}, 합작법인 설립",
+    "{name}, 전략적 지분 투자 유치",
+    // 시장/업황 관련
+    "{name}, 업계 1위 등극",
+    "{name}, 시장 점유율 확대",
+    "{name}, 수출 물량 급증",
+    "{name}, 신제품 초기 반응 폭발적",
+    "{name}, 글로벌 시장 진출 성과",
   ],
   BAD: [
+    // 실적 관련
     "{name}, 분기 실적 예상치 크게 하회",
+    "{name}, 적자 전환 충격",
+    "{name}, 매출 급감 우려",
+    "{name}, 영업이익 대폭 감소",
+    "{name}, 어닝 쇼크 발생",
+    // 리콜/품질 관련
     "{name}, 대규모 리콜 발표",
+    "{name}, 제품 결함 발견",
+    "{name}, 품질 문제로 출하 중단",
+    "{name}, 안전 이슈로 판매 중지",
+    "{name}, 대규모 집단 소송 예고",
+    // 인력/조직 관련
     "{name}, 핵심 인력 대거 이탈",
+    "{name}, CEO 사임 발표",
+    "{name}, 대규모 구조조정 단행",
+    "{name}, 임직원 파업 돌입",
+    "{name}, 경영진 교체 혼란",
+    // 기관/외국인 관련
     "{name}, 기관 매도세 급증",
     "{name}, 외국인 대량 매도 포착",
+    "{name}, 연기금 비중 축소",
+    "{name}, 글로벌 투자자 이탈",
+    "{name}, 공매도 급증",
+    // 규제/조사 관련
     "{name}, 규제 당국 조사 착수",
+    "{name}, 공정위 과징금 부과",
+    "{name}, 감사원 특별 감사",
+    "{name}, 검찰 압수수색",
+    "{name}, 상장폐지 심사 대상",
+    // 경쟁/시장 관련
     "{name}, 경쟁사에 시장 점유율 잠식",
+    "{name}, 주력 제품 경쟁력 약화",
+    "{name}, 시장 퇴출 우려",
+    "{name}, 가격 경쟁 심화로 수익성 악화",
+    "{name}, 신규 진입자에 위협받는 중",
+    // 계약/거래 관련
     "{name}, 주요 고객사 계약 해지",
+    "{name}, 대형 거래선 이탈",
+    "{name}, 공급 계약 파기 통보",
+    "{name}, 파트너사 협력 종료",
+    "{name}, 핵심 바이어 거래 중단",
+    // 회계/비리 관련
     "{name}, 분식회계 의혹 제기",
     "{name}, 경영진 비리 혐의",
+    "{name}, 내부자 거래 적발",
+    "{name}, 횡령 사건 발생",
+    "{name}, 회계 감리 대상 지정",
+    // 재무/자금 관련
+    "{name}, 유동성 위기설 확산",
+    "{name}, 신용등급 하향 조정",
+    "{name}, 부채비율 급증 우려",
+    "{name}, 차입금 상환 불이행",
+    "{name}, 기업 회생 신청 검토",
   ],
 };
 
@@ -319,9 +407,16 @@ async function runMarketLoop(loopId) {
           return generateNewsEvent(stock, config, gameTick, currentDay);
         });
         
-        // 뉴스 저장 (즉시 반영하지 않고 applyAtTick에 저장)
+        // 기존 뉴스 가져오기
+        const existingNewsDoc = await db.doc('game/newsEvents').get();
+        const existingEvents = existingNewsDoc.exists ? (existingNewsDoc.data().events || []) : [];
+        
+        // 새 뉴스를 앞에 추가하고 최근 5개만 유지
+        const allEvents = [...newsEvents, ...existingEvents].slice(0, 5);
+        
+        // 뉴스 저장 (최근 5개만 유지)
         await db.doc('game/newsEvents').set({
-          events: newsEvents,
+          events: allEvents,
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
@@ -743,6 +838,7 @@ exports.resetStockPrices = onCall({
     throw new HttpsError('permission-denied', 'Only admin can reset stock prices');
   }
   
+  // 주가 초기화
   await db.doc('game/stockPrices').set({
     prices: getInitialPrices(),
     gameTick: 0,
@@ -752,5 +848,11 @@ exports.resetStockPrices = onCall({
     lastUpdated: admin.firestore.FieldValue.serverTimestamp()
   });
   
-  return { success: true, message: 'Stock prices reset' };
+  // 뉴스 데이터도 초기화
+  await db.doc('game/newsEvents').set({
+    events: [],
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  
+  return { success: true, message: 'Stock prices and news reset' };
 });

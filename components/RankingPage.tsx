@@ -3,6 +3,9 @@ import { useAuthStore, UserInfo } from '../store/authStore';
 import { useGameStore } from '../store/gameStore';
 import { KRW } from './Formatters';
 
+// 관리자 이메일 목록
+const ADMIN_EMAILS = ['bluesangh@gmail.com'];
+
 const RankingPage: React.FC = () => {
   const { getAllUsersForRanking, user } = useAuthStore();
   const { stocks } = useGameStore();
@@ -54,9 +57,12 @@ const RankingPage: React.FC = () => {
       })
     );
     
+    // 관리자 제외 필터링
+    const filteredUsers = usersWithTotalAsset.filter(u => !ADMIN_EMAILS.includes(u.email));
+    
     // 총잔고 기준 내림차순 정렬
-    usersWithTotalAsset.sort((a, b) => (b.totalAsset || 0) - (a.totalAsset || 0));
-    setUsers(usersWithTotalAsset);
+    filteredUsers.sort((a, b) => (b.totalAsset || 0) - (a.totalAsset || 0));
+    setUsers(filteredUsers);
     setLoading(false);
   };
 
@@ -120,13 +126,12 @@ const RankingPage: React.FC = () => {
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-white">
-                                {u.nickname || u.email.split('@')[0]}
+                                {u.nickname || '익명'}
                               </span>
                               {isCurrentUser && (
                                 <span className="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded">나</span>
                               )}
                             </div>
-                            <p className="text-xs text-gray-500">{u.email}</p>
                           </div>
                         </div>
                         <div className="text-right">
@@ -171,13 +176,12 @@ const RankingPage: React.FC = () => {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-white">
-                              {u.nickname || u.email.split('@')[0]}
+                              {u.nickname || '익명'}
                             </span>
                             {isCurrentUser && (
                               <span className="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded">나</span>
                             )}
                           </div>
-                          <p className="text-xs text-gray-500">{u.email}</p>
                         </div>
                       </div>
                       <div className="text-right">
