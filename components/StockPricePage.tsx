@@ -4,11 +4,22 @@ import { KRW } from './Formatters';
 import CandleChart from './CandleChart';
 
 const StockPricePage: React.FC = () => {
-  const { stocks, selectedStockId, setPage, setSelectedOrderPrice } = useGameStore();
+  const { stocks, selectedStockId, setPage, setSelectedOrderPrice, gameTick } = useGameStore();
   const [showChart, setShowChart] = useState(false);
   const [selectedPrice, setSelectedPrice] = useState<number | null>(null);
   
   const stock = stocks.find(s => s.id === selectedStockId);
+  
+  // 거래정지 남은 시간 계산 (초 단위)
+  const getRemainingHaltTime = () => {
+    if (!stock || !stock.tradingHalted || !stock.haltedUntilTick) return 0;
+    const remaining = stock.haltedUntilTick - gameTick;
+    return Math.max(0, remaining);
+  };
+  
+  const remainingHaltSeconds = getRemainingHaltTime();
+  const haltMinutes = Math.floor(remainingHaltSeconds / 60);
+  const haltSeconds = remainingHaltSeconds % 60;
   
   if (!stock) {
     return (
@@ -87,13 +98,31 @@ const StockPricePage: React.FC = () => {
           )}
         </div>
         
-        {/* 거래정지 경고 배너 */}
+        {/* 거래정지 경고 배너 + 타이머 */}
         {stock.tradingHalted && (
           <div className="mt-3 p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg">
-            <p className="text-yellow-400 text-sm font-bold">⏸️ 거래정지 상태</p>
-            <p className="text-yellow-500 text-xs mt-1">
-              {stock.frozenAtLimit === 'upper' ? '상한가' : '하한가'} 도달로 5분간 거래가 중단됩니다.
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-yellow-400 text-sm font-bold">⏸️ 거래정지 상태</p>
+                <p className="text-yellow-500 text-xs mt-1">
+                  {stock.frozenAtLimit === 'upper' ? '상한가' : '하한가'} 도달로 5분간 거래가 중단됩니다.
+                </p>
+              </div>
+              {/* 타이머 */}
+              <div className="text-right">
+                <p className="text-yellow-400 text-2xl font-bold font-mono">
+                  {haltMinutes}:{haltSeconds.toString().padStart(2, '0')}
+                </p>
+                <p className="text-yellow-500 text-xs">남은 시간</p>
+              </div>
+            </div>
+            {/* 진행 바 */}
+            <div className="mt-2 h-1.5 bg-yellow-900 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-yellow-500 transition-all duration-1000"
+                style={{ width: `${((300 - remainingHaltSeconds) / 300) * 100}%` }}
+              />
+            </div>
           </div>
         )}
         

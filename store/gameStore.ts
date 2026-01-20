@@ -42,6 +42,15 @@ interface StockPriceData {
     openPrice: number;
     upperLimit: number;
     lowerLimit: number;
+    // 거래정지 관련
+    tradingHalted?: boolean;
+    haltedUntilTick?: number | null;
+    haltedAtTick?: number | null;
+    haltReason?: 'upper' | 'lower' | null;
+    // 상장폐지 관련
+    isDelisted?: boolean;
+    delistedAtDay?: number | null;
+    delistingWarning?: boolean;
   };
 }
 
@@ -58,11 +67,21 @@ interface StockPriceDocument {
   dayProgress?: number;
 }
 
+// 체결된 주문 정보
+interface ExecutedOrder {
+  orderId: string;
+  stockName: string;
+  side: 'buy' | 'sell';
+  quantity: number;
+  price: number;
+}
+
 interface GameStore extends GameState {
   transactions: TransactionRecord[];
   realizedPnL: number;
   pendingOrders: PendingOrder[];
   latestNews: NewsEvent | null; // 가장 최근 뉴스 (팝업용)
+  executedOrders: ExecutedOrder[]; // 체결된 예약 주문 (팝업용)
   isNewsPhase: boolean; // 뉴스 페이즈 여부
   newsPhaseCountdown: number; // 뉴스 페이즈 남은 시간
   newsWarningActive: boolean; // 뉴스 경고 활성화 여부
@@ -79,6 +98,7 @@ interface GameStore extends GameState {
   addPendingOrder: (order: Omit<PendingOrder, 'id' | 'createdAt' | 'createdDay'>) => void;
   cancelPendingOrder: (orderId: string) => void;
   clearLatestNews: () => void;
+  clearExecutedOrders: () => void;
   sellAllStocks: () => void;
   setNewsEvents: (news: NewsEvent[]) => void;
 }
@@ -430,6 +450,7 @@ export const useGameStore = create<GameStore>()(
       realizedPnL: 0,
       pendingOrders: [],
       latestNews: null,
+      executedOrders: [],
       isNewsPhase: false,
       newsPhaseCountdown: 0,
       newsWarningActive: false,
@@ -497,15 +518,21 @@ export const useGameStore = create<GameStore>()(
 
       // Firebase에서 로드한 주가 데이터를 적용
       loadStockPricesFromFirebase: (data: StockPriceDocument) => {
-        const { stocks } = get();
+        const { stocks, pendingOrders, buyStock, sellStock, gameTick: currentGameTick } = get();
         const prices = data.prices || data as unknown as StockPriceData; // 호환성을 위해
         
         const updatedStocks = stocks.map(stock => {
           const priceData = prices[stock.id];
           if (priceData) {
-            const priceChange = priceData.currentPrice - stock.currentPrice;
-            // 호가창도 현재 가격 기준으로 업데이트
-            const newOrderBook = generateOrderBookFromPrice(priceData.currentPrice, stock.type === 'bluechip');
+            // 거래정지 또는 상장폐지 시 호가창 업데이트 안함
+            const isTradingHalted = priceData.tradingHalted || false;
+            const isDelisted = priceData.isDelisted || false;
+            
+            // 호가창: 거래정지/상장폐지가 아닐 때만 업데이트
+            const newOrderBook = (isTradingHalted || isDelisted) 
+              ? stock.orderBook 
+              : generateOrderBookFromPrice(priceData.currentPrice, stock.type === 'bluechip');
+            
             return {
               ...stock,
               currentPrice: priceData.currentPrice,
@@ -514,12 +541,70 @@ export const useGameStore = create<GameStore>()(
               upperLimit: priceData.upperLimit,
               lowerLimit: priceData.lowerLimit,
               orderBook: newOrderBook,
+              // 거래정지 관련
+              tradingHalted: priceData.tradingHalted || false,
+              haltedUntilTick: priceData.haltedUntilTick || null,
+              haltedAtTick: priceData.haltedAtTick || null,
+              frozenAtLimit: priceData.haltReason || null,
+              priceFrozen: priceData.tradingHalted || false,
+              // 상장폐지 관련
+              isDelisted: priceData.isDelisted || false,
+              delistedAtDay: priceData.delistedAtDay || null,
+              delistingWarning: priceData.delistingWarning || false,
             };
           }
           return stock;
         });
         
-        const updates: Partial<GameState> = { stocks: updatedStocks };
+        // 예약 주문 체결 체크
+        const executedOrders: { orderId: string; stockName: string; side: 'buy' | 'sell'; quantity: number; price: number }[] = [];
+        const remainingOrderIds: string[] = [];
+        
+        for (const order of pendingOrders) {
+          const orderStock = updatedStocks.find(s => s.id === order.stockId);
+          if (!orderStock) {
+            remainingOrderIds.push(order.id);
+            continue;
+          }
+          
+          // 상장폐지 또는 거래정지 종목은 예약 주문 취소 (체결 알림 없이)
+          if (orderStock.isDelisted || orderStock.tradingHalted) {
+            // 주문 제거 (알림 없음)
+            continue;
+          }
+          
+          // 매수 예약: 현재가가 목표가 이하로 떨어지면 체결
+          if (order.side === 'buy' && orderStock.currentPrice <= order.targetPrice) {
+            buyStock(order.stockId, order.quantity, orderStock.currentPrice);
+            executedOrders.push({
+              orderId: order.id,
+              stockName: orderStock.name,
+              side: 'buy',
+              quantity: order.quantity,
+              price: orderStock.currentPrice
+            });
+          }
+          // 매도 예약: 현재가가 목표가 이상으로 올라가면 체결
+          else if (order.side === 'sell' && orderStock.currentPrice >= order.targetPrice) {
+            sellStock(order.stockId, order.quantity, orderStock.currentPrice);
+            executedOrders.push({
+              orderId: order.id,
+              stockName: orderStock.name,
+              side: 'sell',
+              quantity: order.quantity,
+              price: orderStock.currentPrice
+            });
+          } else {
+            remainingOrderIds.push(order.id);
+          }
+        }
+        
+        const remainingOrders = pendingOrders.filter(o => remainingOrderIds.includes(o.id));
+        
+        const updates: Partial<GameState> = { 
+          stocks: updatedStocks,
+          pendingOrders: remainingOrders
+        };
         
         // gameTick과 currentDay도 업데이트 (서버에서 제공하는 경우)
         if (data.gameTick !== undefined) {
@@ -552,8 +637,13 @@ export const useGameStore = create<GameStore>()(
           (updates as any).dayProgress = data.dayProgress;
         }
         
+        // 체결된 주문 정보 저장 (팝업용)
+        if (executedOrders.length > 0) {
+          (updates as any).executedOrders = executedOrders;
+        }
+        
         set(updates);
-        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay, isNewsPhase: data.isNewsPhase, isMarketClosed: data.isMarketClosed });
+        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay, executedOrders: executedOrders.length });
       },
 
       updateGameTick: (gameTick: number, currentDay: number) => {
@@ -933,6 +1023,11 @@ export const useGameStore = create<GameStore>()(
       // 최근 뉴스 클리어 (팝업 닫기용)
       clearLatestNews: () => {
         set({ latestNews: null });
+      },
+      
+      // 체결된 예약 주문 클리어
+      clearExecutedOrders: () => {
+        set({ executedOrders: [] });
       },
       
       // 뉴스 이벤트 설정 (Firebase에서 받은 뉴스)

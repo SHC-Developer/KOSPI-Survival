@@ -64,10 +64,10 @@ const AlertPopup: React.FC<AlertPopupProps> = ({ popup, index, onClose }) => {
     return () => clearTimeout(timer);
   }, [popup.id, onClose]);
 
-  // 스택 효과: 아래로 갈수록 offset
-  const topOffset = 56 + (index * 8); // 14px * 4 = 56px 기본 + 8px씩 아래로
-  const scale = 1 - (index * 0.03);
-  const opacity = 1 - (index * 0.1);
+  // 스택 효과: 아래로 갈수록 offset (70px씩 아래로)
+  const topOffset = 56 + (index * 70); // 56px 기본 + 70px씩 아래로
+  const scale = 1 - (index * 0.02);
+  const opacity = 1 - (index * 0.15);
 
   if (popup.type === 'news') {
     const news = popup.data as NewsEvent;
@@ -201,7 +201,8 @@ const App: React.FC = () => {
     isMarketClosed,
     marketClosingMessage,
     dayProgress,
-    pendingOrders
+    executedOrders,
+    clearExecutedOrders
   } = useGameStore();
   
   const [popupStack, setPopupStack] = useState<PopupItem[]>([]);
@@ -209,7 +210,6 @@ const App: React.FC = () => {
   const [nicknameInput, setNicknameInput] = useState('');
   const [nicknameError, setNicknameError] = useState('');
   const [currentUserNickname, setCurrentUserNickname] = useState<string | null>(null);
-  const prevPendingOrdersRef = useRef<typeof pendingOrders>([]);
   
   const { 
     user, 
@@ -414,35 +414,26 @@ const App: React.FC = () => {
     }
   }, [latestNews, clearLatestNews]);
 
-  // 예약 주문 체결 감지
+  // 예약 주문 체결 감지 (gameStore의 executedOrders 사용)
   useEffect(() => {
-    const prevOrders = prevPendingOrdersRef.current;
-    
-    // 이전에 있던 주문이 현재 없어졌으면 체결된 것
-    prevOrders.forEach(prevOrder => {
-      const stillExists = pendingOrders.some(o => o.id === prevOrder.id);
-      if (!stillExists) {
-        // 체결된 주문 찾기
-        const stock = stocks.find(s => s.id === prevOrder.stockId);
-        if (stock) {
-          const orderPopup: PopupItem = {
-            id: `order-${prevOrder.id}-${Date.now()}`,
-            type: 'order',
-            data: {
-              stockName: stock.name,
-              side: prevOrder.side,
-              quantity: prevOrder.quantity,
-              price: stock.currentPrice
-            },
-            timestamp: Date.now()
-          };
-          setPopupStack(prev => [orderPopup, ...prev].slice(0, 5));
-        }
-      }
-    });
-    
-    prevPendingOrdersRef.current = pendingOrders;
-  }, [pendingOrders, stocks]);
+    if (executedOrders.length > 0) {
+      executedOrders.forEach(order => {
+        const orderPopup: PopupItem = {
+          id: `order-${order.orderId}-${Date.now()}`,
+          type: 'order',
+          data: {
+            stockName: order.stockName,
+            side: order.side,
+            quantity: order.quantity,
+            price: order.price
+          },
+          timestamp: Date.now()
+        };
+        setPopupStack(prev => [orderPopup, ...prev].slice(0, 5));
+      });
+      clearExecutedOrders();
+    }
+  }, [executedOrders, clearExecutedOrders]);
   
   // 팝업 닫기 핸들러
   const handleClosePopup = useCallback((id: string) => {
