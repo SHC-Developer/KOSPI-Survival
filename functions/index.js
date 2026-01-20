@@ -1,6 +1,7 @@
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
+const https = require("https");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -720,11 +721,11 @@ exports.updateStockPrices = onSchedule({
   }
 });
 
-// 서버 시작/중지 (Admin용) - 시작 시 연속 루프 실행
+// 서버 시작/중지 (Admin용) - 시작 시 continueMarketLoop 트리거
 exports.toggleServer = onCall({
   region: "asia-northeast3",
-  timeoutSeconds: 3600, // 60분 (HTTP callable 최대 timeout)
-  memory: "512MiB",
+  timeoutSeconds: 60, // 1분 (빠른 응답용)
+  memory: "256MiB",
 }, async (request) => {
   // 인증 확인
   if (!request.auth) {
@@ -765,62 +766,13 @@ exports.toggleServer = onCall({
       });
     }
     
-    console.log(`[toggleServer] Starting continuous market loop: ${loopId}`);
+    console.log(`[toggleServer] Starting market loop via continueMarketLoop: ${loopId}`);
     
-    // 연속 실행 루프: 서버가 켜져 있는 동안 계속 실행
-    // 하루(30분) → 휴장(3분) → 다음 하루(30분) → 휴장(3분) → ...
-    const CLOSING_DURATION = 180; // 휴장 시간 3분 = 180초
-    let dayCount = 0;
-    const MAX_DAYS = 60; // 안전장치: 최대 60일 (약 33시간)
+    // continueMarketLoop를 호출하여 실제 루프 시작 (체인 방식으로 무한 실행)
+    // 이 함수는 빠르게 응답을 반환하고, 실제 루프는 HTTP endpoint에서 처리
+    triggerNextLoop();
     
-    while (dayCount < MAX_DAYS) {
-      // 서버 상태 확인
-      const statusDoc = await db.doc('game/serverStatus').get();
-      const statusData = statusDoc.exists ? statusDoc.data() : { isRunning: false };
-      
-      // 서버가 중지되었거나 다른 루프가 시작되면 종료
-      if (!statusData.isRunning || statusData.currentLoopId !== loopId) {
-        console.log(`[toggleServer] Loop ${loopId} terminated: isRunning=${statusData.isRunning}, currentLoopId=${statusData.currentLoopId}`);
-        break;
-      }
-      
-      // 하루(30분) 마켓 루프 실행
-      dayCount++;
-      console.log(`[toggleServer] Day ${dayCount} starting...`);
-      await runMarketLoop(loopId);
-      
-      // 다시 서버 상태 확인
-      const statusDoc2 = await db.doc('game/serverStatus').get();
-      const statusData2 = statusDoc2.exists ? statusDoc2.data() : { isRunning: false };
-      
-      if (!statusData2.isRunning || statusData2.currentLoopId !== loopId) {
-        console.log(`[toggleServer] Loop ${loopId} terminated after day ${dayCount}`);
-        break;
-      }
-      
-      // 휴장 시간 대기 (3분) - 카운트다운 표시
-      console.log(`[toggleServer] Market closed. Waiting ${CLOSING_DURATION}s for next day...`);
-      
-      for (let countdown = CLOSING_DURATION; countdown > 0; countdown -= 10) {
-        // 10초마다 카운트다운 업데이트
-        await db.doc('game/stockPrices').update({
-          marketClosingMessage: `📢 장이 마감되었습니다. ${countdown}초 후 다음 장이 개장합니다.`,
-        });
-        
-        // 서버 상태 확인 (종료 요청이 있으면 루프 탈출)
-        const checkDoc = await db.doc('game/serverStatus').get();
-        const checkData = checkDoc.exists ? checkDoc.data() : { isRunning: false };
-        if (!checkData.isRunning || checkData.currentLoopId !== loopId) {
-          console.log(`[toggleServer] Loop ${loopId} terminated during closing`);
-          return { success: true, message: 'Server stopped during market closing', loopId };
-        }
-        
-        await sleep(Math.min(10, countdown) * 1000);
-      }
-    }
-    
-    console.log(`[toggleServer] Loop ${loopId} ended after ${dayCount} days`);
-    return { success: true, message: `Market loop completed after ${dayCount} days`, loopId };
+    return { success: true, message: 'Server started. Market loop running.', loopId };
     
   } else if (action === 'stop') {
     // 서버 중지
@@ -908,3 +860,134 @@ exports.resetStockPrices = onCall({
   
   return { success: true, message: 'Stock prices and news reset' };
 });
+
+// ============== 자동 재시작용 HTTP Endpoint ==============
+// 비밀 키로 보호된 내부용 endpoint
+const INTERNAL_SECRET = 'kospi-survival-internal-secret-2024';
+
+exports.continueMarketLoop = onRequest({
+  region: "asia-northeast3",
+  timeoutSeconds: 3600, // 60분
+  memory: "512MiB",
+}, async (req, res) => {
+  // 비밀 키 확인 (내부 호출만 허용)
+  const providedSecret = req.query.secret || req.body?.secret;
+  if (providedSecret !== INTERNAL_SECRET) {
+    res.status(403).send('Forbidden');
+    return;
+  }
+  
+  try {
+    // 서버 상태 확인
+    const serverDoc = await db.doc('game/serverStatus').get();
+    const serverData = serverDoc.exists ? serverDoc.data() : { isRunning: false };
+    
+    if (!serverData.isRunning) {
+      console.log('[continueMarketLoop] Server is stopped. Exiting.');
+      res.status(200).send('Server is stopped');
+      return;
+    }
+    
+    // 새 루프 ID 생성
+    const loopId = `auto-${Date.now()}`;
+    
+    // 현재 루프 ID 업데이트
+    await db.doc('game/serverStatus').update({
+      currentLoopId: loopId,
+      loopStartedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    console.log(`[continueMarketLoop] Starting new loop: ${loopId}`);
+    
+    // 연속 루프 실행
+    const CLOSING_DURATION = 180;
+    let dayCount = 0;
+    const MAX_DAYS_PER_CYCLE = 1; // 한 번에 1일만 실행 (약 33분)
+    
+    while (dayCount < MAX_DAYS_PER_CYCLE) {
+      // 서버 상태 확인
+      const statusDoc = await db.doc('game/serverStatus').get();
+      const statusData = statusDoc.exists ? statusDoc.data() : { isRunning: false };
+      
+      if (!statusData.isRunning || statusData.currentLoopId !== loopId) {
+        console.log(`[continueMarketLoop] Loop ${loopId} terminated`);
+        res.status(200).send('Loop terminated');
+        return;
+      }
+      
+      dayCount++;
+      console.log(`[continueMarketLoop] Day ${dayCount} starting...`);
+      await runMarketLoop(loopId);
+      
+      // 서버 상태 재확인
+      const statusDoc2 = await db.doc('game/serverStatus').get();
+      const statusData2 = statusDoc2.exists ? statusDoc2.data() : { isRunning: false };
+      
+      if (!statusData2.isRunning || statusData2.currentLoopId !== loopId) {
+        console.log(`[continueMarketLoop] Loop ${loopId} terminated after day`);
+        res.status(200).send('Loop terminated');
+        return;
+      }
+      
+      // 휴장 시간 (카운트다운)
+      console.log(`[continueMarketLoop] Market closed. Waiting ${CLOSING_DURATION}s...`);
+      
+      for (let countdown = CLOSING_DURATION; countdown > 0; countdown -= 10) {
+        await db.doc('game/stockPrices').update({
+          marketClosingMessage: `📢 장이 마감되었습니다. ${countdown}초 후 다음 장이 개장합니다.`,
+        });
+        
+        const checkDoc = await db.doc('game/serverStatus').get();
+        const checkData = checkDoc.exists ? checkDoc.data() : { isRunning: false };
+        if (!checkData.isRunning || checkData.currentLoopId !== loopId) {
+          res.status(200).send('Server stopped during closing');
+          return;
+        }
+        
+        await sleep(Math.min(10, countdown) * 1000);
+      }
+    }
+    
+    // 다음 루프 자동 시작 (자기 자신 호출)
+    const statusDoc3 = await db.doc('game/serverStatus').get();
+    const statusData3 = statusDoc3.exists ? statusDoc3.data() : { isRunning: false };
+    
+    if (statusData3.isRunning) {
+      console.log(`[continueMarketLoop] Triggering next loop...`);
+      
+      // 비동기로 다음 루프 트리거 (응답은 먼저 보냄)
+      triggerNextLoop();
+    }
+    
+    res.status(200).send(`Loop ${loopId} completed. Next loop triggered.`);
+    
+  } catch (error) {
+    console.error('[continueMarketLoop] Error:', error);
+    res.status(500).send('Internal error');
+  }
+});
+
+// 다음 루프 트리거 함수
+function triggerNextLoop() {
+  const options = {
+    hostname: 'asia-northeast3-kopsi-survival.cloudfunctions.net',
+    path: `/continueMarketLoop?secret=${INTERNAL_SECRET}`,
+    method: 'GET',
+    timeout: 5000
+  };
+  
+  const req = https.request(options, (res) => {
+    console.log(`[triggerNextLoop] Response: ${res.statusCode}`);
+  });
+  
+  req.on('error', (error) => {
+    console.error('[triggerNextLoop] Error:', error.message);
+  });
+  
+  req.on('timeout', () => {
+    console.log('[triggerNextLoop] Request timeout (expected)');
+    req.destroy();
+  });
+  
+  req.end();
+}
