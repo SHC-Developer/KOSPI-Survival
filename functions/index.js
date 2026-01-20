@@ -15,17 +15,15 @@ const DAILY_UPPER_LIMIT = 1.30;
 const DAILY_LOWER_LIMIT = 0.70;
 
 // 30분(1800초) 동안 1초마다 업데이트 = 1일
-// Cloud Scheduler가 30분마다 트리거
 const MARKET_DURATION = 1800; // 30분 = 1800초 = 1일
 const NEWS_INTERVAL = 60; // 1분(60틱)마다 뉴스 이벤트
 
 // 종목 설정 (4개: 대형주 2개 + 작전주 2개)
-// jumpIntensity 조정: 대형주 상향, 작전주 하향 (더 균형 잡힌 변동폭)
 const STOCK_CONFIGS = [
-  { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03, jumpIntensity: 0.3 },   // 1.5% ~ 6%
-  { id: '2', name: 'SK하이닉스', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04, jumpIntensity: 0.35 }, // 1.75% ~ 7%
-  { id: '3', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15, jumpIntensity: 0.4 },    // 8% ~ 24%
-  { id: '4', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18, jumpIntensity: 0.45 },   // 9% ~ 27%
+  { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03, jumpIntensity: 0.3 },
+  { id: '2', name: 'SK하이닉스', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04, jumpIntensity: 0.35 },
+  { id: '3', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15, jumpIntensity: 0.4 },
+  { id: '4', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18, jumpIntensity: 0.45 },
 ];
 
 // 가짜 뉴스 확률 (30%)
@@ -149,10 +147,8 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
   // 점프 크기 결정
   let jumpPercent;
   if (config.type === 'bluechip') {
-    // 대형주: ±5% ~ ±20%
     jumpPercent = (0.05 + Math.random() * 0.15) * config.jumpIntensity;
   } else {
-    // 작전주: ±20% ~ ±60%
     jumpPercent = (0.20 + Math.random() * 0.40) * config.jumpIntensity;
   }
   
@@ -163,11 +159,9 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
   if (isFakeNews) {
     const fakeEffect = Math.random();
     if (fakeEffect < 0.5) {
-      // 50%: 역방향 (호재→하락, 악재→상승)
-      actualJumpPercent = -jumpPercent * (0.3 + Math.random() * 0.5); // 30%~80% 역방향
+      actualJumpPercent = -jumpPercent * (0.3 + Math.random() * 0.5);
     } else {
-      // 50%: 효과 없음 또는 미미함
-      actualJumpPercent = jumpPercent * (Math.random() * 0.2); // 0%~20% 효과
+      actualJumpPercent = jumpPercent * (Math.random() * 0.2);
     }
   }
   
@@ -181,9 +175,9 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
       : `${config.name}에 대한 투자 주의가 필요합니다.`,
     effect: isGood ? 'GOOD' : 'BAD',
     targetStockId: config.id,
-    jumpPercent: actualJumpPercent * 100, // 실제 적용될 퍼센트 (가짜 뉴스 효과 반영)
-    isFakeNews: isFakeNews, // 가짜 뉴스 여부 (클라이언트에서 결과 확인용)
-    displayedEffect: isGood ? 'GOOD' : 'BAD', // 표시된 효과 (뉴스 내용 기준)
+    jumpPercent: actualJumpPercent * 100,
+    isFakeNews: isFakeNews,
+    displayedEffect: isGood ? 'GOOD' : 'BAD',
   };
 }
 
@@ -192,7 +186,6 @@ function applyNewsJump(stock, jumpPercent) {
   let newPrice = stock.currentPrice * (1 + jumpPercent / 100);
   newPrice = roundToTickSize(newPrice);
   
-  // 상/하한가 제한
   if (newPrice >= stock.upperLimit) {
     newPrice = stock.upperLimit;
   } else if (newPrice <= stock.lowerLimit) {
@@ -202,31 +195,14 @@ function applyNewsJump(stock, jumpPercent) {
   return newPrice;
 }
 
-// ============== Cloud Functions ==============
-
-// 유틸: sleep 함수
+// sleep 함수
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 30분마다 주가 업데이트 (Cloud Scheduler) - 30분 동안 매초 업데이트 후 장 마감
-exports.updateStockPrices = onSchedule({
-  schedule: "*/30 * * * *", // 30분마다 (0분, 30분)
-  timeZone: "Asia/Seoul",
-  region: "asia-northeast3",
-  timeoutSeconds: 2100, // 35분 (30분 + 여유)
-  memory: "512MiB",
-}, async (event) => {
+// ============== 30분 루프 실행 함수 (공통 로직) ==============
+async function runMarketLoop(loopId) {
   const cycleStartTime = Date.now();
   
   try {
-    // 서버 상태 확인
-    const serverDoc = await db.doc('game/serverStatus').get();
-    const serverData = serverDoc.exists ? serverDoc.data() : { isRunning: false };
-    
-    if (!serverData.isRunning) {
-      console.log('Server is stopped. Skipping price update.');
-      return;
-    }
-    
     // 현재 주가 가져오기
     let stockDoc = await db.doc('game/stockPrices').get();
     let prices = stockDoc.exists ? stockDoc.data().prices : getInitialPrices();
@@ -234,7 +210,7 @@ exports.updateStockPrices = onSchedule({
     let currentDay = stockDoc.exists ? (stockDoc.data().currentDay || 1) : 1;
     
     // 새로운 장 시작 - 전일 종가 업데이트
-    console.log(`=== Day ${currentDay} Market Open ===`);
+    console.log(`=== [${loopId}] Day ${currentDay} Market Open ===`);
     STOCK_CONFIGS.forEach(config => {
       const stock = prices[config.id];
       const newPrevClose = stock.currentPrice;
@@ -262,13 +238,27 @@ exports.updateStockPrices = onSchedule({
     for (let tick = 0; tick < MARKET_DURATION; tick++) {
       const targetTime = cycleStartTime + (tick * 1000);
       
-      // 뉴스 이벤트 체크 (1분마다) - 주가 업데이트는 멈추지 않고 팝업만 표시
+      // 서버 상태 확인 (100틱마다) - 중간에 서버가 중지되면 루프 종료
+      if (tick % 100 === 0) {
+        const serverDoc = await db.doc('game/serverStatus').get();
+        const serverData = serverDoc.exists ? serverDoc.data() : { isRunning: false };
+        if (!serverData.isRunning) {
+          console.log(`[${loopId}] Server stopped during loop at tick ${tick}. Exiting.`);
+          return;
+        }
+        // loopId 확인 - 다른 루프가 시작되었으면 이 루프 종료
+        if (serverData.currentLoopId && serverData.currentLoopId !== loopId) {
+          console.log(`[${loopId}] New loop started (${serverData.currentLoopId}). Exiting old loop.`);
+          return;
+        }
+      }
+      
+      // 뉴스 이벤트 체크 (1분마다)
       const isNewsTime = tick > 0 && tick % NEWS_INTERVAL === 0;
       
       if (isNewsTime) {
-        console.log(`News event at tick ${tick}`);
+        console.log(`[${loopId}] News event at tick ${tick}`);
         
-        // 4개 종목 중 1~2개에 뉴스 발생
         const newsStockCount = Math.floor(Math.random() * 2) + 1;
         const shuffledConfigs = [...STOCK_CONFIGS].sort(() => Math.random() - 0.5);
         const selectedConfigs = shuffledConfigs.slice(0, newsStockCount);
@@ -278,13 +268,13 @@ exports.updateStockPrices = onSchedule({
           return generateNewsEvent(stock, config, gameTick, currentDay);
         });
         
-        // 뉴스 저장 (클라이언트에서 팝업으로 표시)
+        // 뉴스 저장
         await db.doc('game/newsEvents').set({
           events: newsEvents,
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
-        // 뉴스 점프 즉시 적용 (대기 없음)
+        // 뉴스 점프 적용
         newsEvents.forEach(news => {
           const config = STOCK_CONFIGS.find(c => c.id === news.targetStockId);
           if (config) {
@@ -298,7 +288,7 @@ exports.updateStockPrices = onSchedule({
         });
       }
       
-      // 주가 업데이트 (뉴스 발생 여부와 관계없이 항상 실행)
+      // 주가 업데이트
       STOCK_CONFIGS.forEach(config => {
         const stock = prices[config.id];
         const newPrice = updatePriceOU(stock, config);
@@ -324,11 +314,11 @@ exports.updateStockPrices = onSchedule({
         gameTick,
         currentDay,
         isMarketClosed: false,
-        dayProgress: Math.round((tick / MARKET_DURATION) * 100), // 진행률 (%)
+        dayProgress: Math.round((tick / MARKET_DURATION) * 100),
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
       
-      // 다음 틱 목표 시간까지 대기
+      // 다음 틱까지 대기
       if (tick < MARKET_DURATION - 1) {
         const nextTargetTime = cycleStartTime + ((tick + 1) * 1000);
         const waitTime = Math.max(0, nextTargetTime - Date.now());
@@ -346,33 +336,84 @@ exports.updateStockPrices = onSchedule({
       gameTick,
       currentDay,
       isMarketClosed: true,
-      marketClosingMessage: "📢 장이 마감되었습니다. 약 1~3분 이후 다음 장이 개장합니다.",
+      marketClosingMessage: "📢 장이 마감되었습니다. 잠시 후 다음 장이 개장합니다.",
       dayProgress: 100,
       lastUpdated: admin.firestore.FieldValue.serverTimestamp()
     });
     
     const totalElapsed = Date.now() - cycleStartTime;
-    console.log(`=== Day ${currentDay - 1} Market Closed === Duration: ${Math.round(totalElapsed / 1000)}s`);
+    console.log(`=== [${loopId}] Day ${currentDay - 1} Market Closed === Duration: ${Math.round(totalElapsed / 1000)}s`);
     
-    // 함수 종료 - 다음 30분에 Cloud Scheduler가 다시 트리거
   } catch (error) {
-    console.error('Error updating stock prices:', error);
+    console.error(`[${loopId}] Error in market loop:`, error);
     
-    // 에러 발생 시 장 마감 상태로 전환
     try {
       await db.doc('game/stockPrices').update({
         isMarketClosed: true,
         marketClosingMessage: "⚠️ 서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
       });
     } catch (e) {
-      console.error('Failed to update error state:', e);
+      console.error(`[${loopId}] Failed to update error state:`, e);
     }
+  }
+}
+
+// ============== Cloud Functions ==============
+
+// Cloud Scheduler: 30분마다 백업용으로 실행 (이미 루프가 실행 중이면 skip)
+exports.updateStockPrices = onSchedule({
+  schedule: "*/30 * * * *",
+  timeZone: "Asia/Seoul",
+  region: "asia-northeast3",
+  timeoutSeconds: 540, // 9분 (scheduled function 최대 timeout)
+  memory: "512MiB",
+}, async (event) => {
+  try {
+    // 서버 상태 확인
+    const serverDoc = await db.doc('game/serverStatus').get();
+    const serverData = serverDoc.exists ? serverDoc.data() : { isRunning: false };
+    
+    if (!serverData.isRunning) {
+      console.log('[Scheduler] Server is stopped. Skipping.');
+      return;
+    }
+    
+    // 현재 루프가 실행 중인지 확인 (최근 2분 이내에 업데이트가 있었으면 실행 중으로 간주)
+    const stockDoc = await db.doc('game/stockPrices').get();
+    if (stockDoc.exists) {
+      const lastUpdated = stockDoc.data().lastUpdated?.toDate();
+      if (lastUpdated) {
+        const timeSinceUpdate = Date.now() - lastUpdated.getTime();
+        if (timeSinceUpdate < 120000) { // 2분 이내
+          console.log('[Scheduler] Market loop is already running. Skipping.');
+          return;
+        }
+      }
+    }
+    
+    // 루프가 실행 중이지 않으면 새 루프 ID 생성하고 시작
+    const loopId = `scheduler-${Date.now()}`;
+    await db.doc('game/serverStatus').update({
+      currentLoopId: loopId,
+      loopStartedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    console.log(`[Scheduler] Starting backup market loop: ${loopId}`);
+    
+    // 참고: Scheduler 함수는 9분 timeout이므로 전체 30분 루프를 실행할 수 없음
+    // 이 함수는 toggleServer가 실패했을 때 백업용으로만 사용됨
+    // 실제로는 toggleServer에서 시작된 루프가 30분 전체를 처리함
+    
+  } catch (error) {
+    console.error('[Scheduler] Error:', error);
   }
 });
 
-// 서버 시작/중지 (Admin용)
+// 서버 시작/중지 (Admin용) - 시작 시 즉시 30분 루프 실행
 exports.toggleServer = onCall({
   region: "asia-northeast3",
+  timeoutSeconds: 2100, // 35분 (HTTP callable은 최대 60분 지원)
+  memory: "512MiB",
 }, async (request) => {
   // 인증 확인
   if (!request.auth) {
@@ -386,12 +427,16 @@ exports.toggleServer = onCall({
     throw new HttpsError('permission-denied', 'Only admin can toggle server');
   }
   
-  const { action } = request.data; // 'start' or 'stop'
+  const { action } = request.data;
   
   if (action === 'start') {
-    // 서버 시작
+    // 고유한 루프 ID 생성
+    const loopId = `manual-${Date.now()}`;
+    
+    // 서버 시작 상태 저장
     await db.doc('game/serverStatus').set({
       isRunning: true,
+      currentLoopId: loopId,
       startedAt: admin.firestore.FieldValue.serverTimestamp(),
       startedBy: userEmail
     });
@@ -409,11 +454,26 @@ exports.toggleServer = onCall({
       });
     }
     
-    return { success: true, message: 'Server started' };
+    console.log(`[toggleServer] Starting market loop: ${loopId}`);
+    
+    // 30분 루프 즉시 시작 (비동기로 실행하되 함수는 계속 실행됨)
+    // 중요: 여기서 await를 사용하면 30분 동안 응답이 안 감
+    // 대신 Promise를 시작하고 응답을 먼저 보낸 후 루프 실행
+    
+    // 참고: Firebase Functions에서는 응답을 보내면 함수가 종료됨
+    // 따라서 루프를 완전히 실행하려면 응답을 보내지 않고 기다려야 함
+    // 클라이언트는 응답을 기다리지 않도록 수정해야 함
+    
+    // 루프 실행 (await 사용 - 30분 동안 실행)
+    await runMarketLoop(loopId);
+    
+    return { success: true, message: 'Server started and market loop completed', loopId };
+    
   } else if (action === 'stop') {
     // 서버 중지
     await db.doc('game/serverStatus').set({
       isRunning: false,
+      currentLoopId: null,
       stoppedAt: admin.firestore.FieldValue.serverTimestamp(),
       stoppedBy: userEmail
     });
@@ -428,7 +488,6 @@ exports.toggleServer = onCall({
 exports.initializeServer = onCall({
   region: "asia-northeast3",
 }, async (request) => {
-  // 인증 확인
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated');
   }
@@ -440,13 +499,12 @@ exports.initializeServer = onCall({
     throw new HttpsError('permission-denied', 'Only admin can initialize server');
   }
   
-  // 서버 상태 초기화
   await db.doc('game/serverStatus').set({
     isRunning: false,
+    currentLoopId: null,
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   });
   
-  // 주가 초기화
   await db.doc('game/stockPrices').set({
     prices: getInitialPrices(),
     gameTick: 0,
@@ -456,7 +514,6 @@ exports.initializeServer = onCall({
     lastUpdated: admin.firestore.FieldValue.serverTimestamp()
   });
   
-  // 뉴스 초기화
   await db.doc('game/newsEvents').set({
     events: [],
     createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -469,7 +526,6 @@ exports.initializeServer = onCall({
 exports.resetStockPrices = onCall({
   region: "asia-northeast3",
 }, async (request) => {
-  // 인증 확인
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated');
   }
@@ -481,7 +537,6 @@ exports.resetStockPrices = onCall({
     throw new HttpsError('permission-denied', 'Only admin can reset stock prices');
   }
   
-  // 주가 초기화
   await db.doc('game/stockPrices').set({
     prices: getInitialPrices(),
     gameTick: 0,

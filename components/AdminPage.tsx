@@ -55,24 +55,49 @@ const AdminPage: React.FC = () => {
     setIsToggling(true);
     try {
       const functions = getFunctions(undefined, 'asia-northeast3');
-      const toggleServer = httpsCallable(functions, 'toggleServer');
+      const toggleServer = httpsCallable(functions, 'toggleServer', {
+        timeout: 5000 // 5초 timeout - 서버 시작은 응답을 기다리지 않음
+      });
       
       const action = isMarketRunning ? 'stop' : 'start';
-      const result = await toggleServer({ action });
       
-      console.log('[Admin] Server toggle result:', result.data);
-      setMessage({ 
-        type: 'success', 
-        text: isMarketRunning 
-          ? '주가 서버가 중지되었습니다.' 
-          : '주가 서버가 시작되었습니다. 10초마다 자동으로 주가가 업데이트됩니다.' 
-      });
+      if (action === 'start') {
+        // 서버 시작: fire-and-forget 방식
+        // 함수 호출만 하고 응답을 기다리지 않음 (30분 루프가 실행되므로)
+        toggleServer({ action }).catch((error) => {
+          // timeout이나 연결 끊김은 정상 (함수가 30분 동안 실행되므로)
+          if (error.code !== 'deadline-exceeded' && error.code !== 'cancelled') {
+            console.error('[Admin] Server start error:', error);
+          }
+        });
+        
+        setMessage({ 
+          type: 'success', 
+          text: '주가 서버가 시작되었습니다. 1초마다 자동으로 주가가 업데이트됩니다.' 
+        });
+      } else {
+        // 서버 중지: 응답 대기 (빠르게 완료됨)
+        const result = await toggleServer({ action });
+        console.log('[Admin] Server stop result:', result.data);
+        setMessage({ 
+          type: 'success', 
+          text: '주가 서버가 중지되었습니다.' 
+        });
+      }
     } catch (error: any) {
-      console.error('[Admin] Server toggle error:', error);
-      setMessage({ 
-        type: 'error', 
-        text: `서버 제어 실패: ${error.message || '알 수 없는 오류'}` 
-      });
+      // 서버 시작 시 timeout 에러는 무시 (정상 동작)
+      if (error.code === 'deadline-exceeded' || error.code === 'cancelled') {
+        setMessage({ 
+          type: 'success', 
+          text: '주가 서버가 시작되었습니다. 1초마다 자동으로 주가가 업데이트됩니다.' 
+        });
+      } else {
+        console.error('[Admin] Server toggle error:', error);
+        setMessage({ 
+          type: 'error', 
+          text: `서버 제어 실패: ${error.message || '알 수 없는 오류'}` 
+        });
+      }
     } finally {
       setIsToggling(false);
       setTimeout(() => setMessage(null), 5000);
@@ -239,15 +264,17 @@ const AdminPage: React.FC = () => {
             <p className="text-gray-400 text-sm">
               {isMarketRunning ? (
                 <>
-                  ✅ <strong>Cloud Functions</strong>가 10초마다 자동으로 주가를 업데이트합니다.
+                  ✅ <strong>Cloud Functions</strong>가 1초마다 자동으로 주가를 업데이트합니다.
                   <br />
-                  ✅ 관리자가 로그아웃해도 서버는 계속 작동합니다.
+                  ✅ 관리자가 로그아웃해도 서버는 30분간 계속 작동합니다.
+                  <br />
+                  ✅ 30분 = 1일, 30분이 지나면 다음 날로 넘어갑니다.
                 </>
               ) : (
                 <>
                   ⚠️ 서버가 중지되어 있습니다. 유저들은 마지막 저장된 주가를 봅니다.
                   <br />
-                  💡 서버를 시작하면 모든 유저에게 실시간으로 주가가 동기화됩니다.
+                  💡 서버를 시작하면 즉시 30분간 실시간 주가 업데이트가 시작됩니다.
                 </>
               )}
             </p>
