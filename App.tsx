@@ -211,6 +211,7 @@ const App: React.FC = () => {
   const [nicknameError, setNicknameError] = useState('');
   const [currentUserNickname, setCurrentUserNickname] = useState<string | null>(null);
   const shownNewsIdsRef = useRef<Set<string>>(new Set());
+  const [showMarketClosedPopup, setShowMarketClosedPopup] = useState(true); // 장 마감 팝업 표시 여부
   
   const { 
     user, 
@@ -401,6 +402,13 @@ const App: React.FC = () => {
     }
   }, [user]);
 
+  // 장이 개장되면 다음 마감 시 팝업 다시 표시
+  useEffect(() => {
+    if (!isMarketClosed) {
+      setShowMarketClosedPopup(true);
+    }
+  }, [isMarketClosed]);
+
   // 새 뉴스가 발생하면 팝업 스택에 추가 (중복 방지)
   useEffect(() => {
     if (latestNews && !shownNewsIdsRef.current.has(latestNews.id)) {
@@ -546,18 +554,30 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100 max-w-lg mx-auto relative">
-      {/* 장 마감 팝업 */}
-      {isMarketClosed && marketClosingMessage && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/90 backdrop-blur-sm">
-          <div className="text-center px-6">
-            <div className="text-6xl mb-6">🔔</div>
-            <h2 className="text-2xl font-bold text-orange-400 mb-4">
-              장 마감
-            </h2>
-            <p className="text-lg text-gray-200 mb-6">
-              {marketClosingMessage}
-            </p>
-            <div className="flex items-center justify-center gap-2 text-gray-400 text-sm">
+      {/* 장 마감 팝업 (닫기 가능) */}
+      {isMarketClosed && marketClosingMessage && showMarketClosedPopup && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[110] w-[90%] max-w-sm transition-all duration-300">
+          <div className="bg-gray-800 border border-orange-500/50 rounded-xl shadow-2xl shadow-orange-500/20 p-4">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-3xl">🔔</div>
+                <div>
+                  <h2 className="text-base font-bold text-orange-400">장 마감</h2>
+                  <p className="text-sm text-gray-300 mt-1">
+                    {marketClosingMessage}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMarketClosedPopup(false)}
+                className="text-gray-500 hover:text-gray-300 p-1"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex items-center gap-2 text-gray-400 text-xs mt-3 pt-3 border-t border-gray-700">
               <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
               <span>다음 장 개장을 기다리는 중...</span>
             </div>
