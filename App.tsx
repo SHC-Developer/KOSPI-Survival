@@ -9,6 +9,7 @@ import PortfolioPage from './components/PortfolioPage';
 import RankingPage from './components/RankingPage';
 import AuthPage from './components/AuthPage';
 import AdminPage from './components/AdminPage';
+import OddEvenGame from './components/OddEvenGame';
 import { NewsEvent } from './types';
 
 // Icons
@@ -189,7 +190,8 @@ const App: React.FC = () => {
     loadStockPricesFromFirebase,
     updateGameTick,
     setNewsEvents,
-    cash, 
+    cash,
+    cashGranted, // 관리자 지급 금액
     portfolio, 
     stocks,
     gameTick,
@@ -212,6 +214,7 @@ const App: React.FC = () => {
   const [currentUserNickname, setCurrentUserNickname] = useState<string | null>(null);
   const shownNewsIdsRef = useRef<Set<string>>(new Set());
   const [showMarketClosedPopup, setShowMarketClosedPopup] = useState(true); // 장 마감 팝업 표시 여부
+  const [showOddEvenGame, setShowOddEvenGame] = useState(false); // 홀짝 게임 페이지 표시
   
   const { 
     user, 
@@ -248,12 +251,13 @@ const App: React.FC = () => {
         if (data) {
           console.log('[App] Game data loaded:', { 
             cash: data.cash, 
+            cashGranted: data.cashGranted,
             gameTick: data.gameTick, 
             nickname: data.nickname,
             nicknameType: typeof data.nickname,
             portfolioCount: data.portfolio?.length || 0
           });
-          loadFromFirebase(data.cash, data.portfolio, data.gameTick);
+          loadFromFirebase(data.cash, data.portfolio, data.gameTick, data.cashGranted || 0);
           
           // 닉네임 저장
           const hasNickname = data.nickname && typeof data.nickname === 'string' && data.nickname.trim().length > 0;
@@ -349,9 +353,10 @@ const App: React.FC = () => {
     
     // 초기 저장
     if (!lastSavedDataRef.current) {
-      console.log('[App] Initial save to Firebase:', { cash, gameTick, currentDay });
+      console.log('[App] Initial save to Firebase:', { cash, cashGranted, gameTick, currentDay });
       saveGameData({
         cash,
+        cashGranted, // 관리자 지급 금액 전달
         portfolio,
         gameTick,
         currentDay,
@@ -363,7 +368,7 @@ const App: React.FC = () => {
     
     // 10초마다 저장 (델타 업데이트)
     saveIntervalRef.current = window.setInterval(() => {
-      const { cash: currentCash, portfolio: currentPortfolio, gameTick: currentGameTick, currentDay: currentDayNow } = useGameStore.getState();
+      const { cash: currentCash, cashGranted: currentCashGranted, portfolio: currentPortfolio, gameTick: currentGameTick, currentDay: currentDayNow } = useGameStore.getState();
       const newTotalAsset = totalAsset; // useMemo로 계산된 값 사용
       const newData = { cash: currentCash, portfolio: currentPortfolio, totalAsset: newTotalAsset, gameTick: currentGameTick, currentDay: currentDayNow };
       
@@ -375,9 +380,10 @@ const App: React.FC = () => {
         lastSavedDataRef.current.gameTick !== currentGameTick;
       
       if (changed) {
-        console.log('[App] Saving to Firebase:', { cash: currentCash, gameTick: currentGameTick, currentDay: currentDayNow });
+        console.log('[App] Saving to Firebase:', { cash: currentCash, cashGranted: currentCashGranted, gameTick: currentGameTick, currentDay: currentDayNow });
         saveGameData({
           cash: currentCash,
+          cashGranted: currentCashGranted, // 관리자 지급 금액 전달
           portfolio: currentPortfolio,
           gameTick: currentGameTick,
           currentDay: currentDayNow,
@@ -393,7 +399,7 @@ const App: React.FC = () => {
         clearInterval(saveIntervalRef.current);
       }
     };
-  }, [user, dataLoaded, saveGameData]);
+  }, [user, dataLoaded, saveGameData, cashGranted]);
 
   // Reset dataLoaded when user logs out
   useEffect(() => {
@@ -603,6 +609,12 @@ const App: React.FC = () => {
               KOSPI Survival
             </h1>
             <span className="text-xs text-gray-500">Day {currentDay}</span>
+            <button
+              onClick={() => setShowOddEvenGame(true)}
+              className="ml-2 px-2 py-0.5 text-xs font-bold bg-gradient-to-r from-blue-500 to-red-500 text-white rounded-full hover:from-blue-400 hover:to-red-400 transition-all animate-pulse"
+            >
+              🎲 홀/짝
+            </button>
           </div>
           
           <div className="flex items-center gap-3">
@@ -640,13 +652,22 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* 메인 컨텐츠 */}
-      <main className="flex-1 overflow-hidden pt-12 pb-16">
-        {renderPage()}
-      </main>
+      {/* 홀짝 게임 페이지 */}
+      {showOddEvenGame && (
+        <OddEvenGame onBack={() => setShowOddEvenGame(false)} />
+      )}
 
-      {/* 하단 네비게이션 */}
-      <BottomNav />
+      {/* 메인 컨텐츠 */}
+      {!showOddEvenGame && (
+        <>
+          <main className="flex-1 overflow-hidden pt-12 pb-16">
+            {renderPage()}
+          </main>
+
+          {/* 하단 네비게이션 */}
+          <BottomNav />
+        </>
+      )}
 
       {/* 닉네임 설정 모달 */}
       {showNicknameModal && (

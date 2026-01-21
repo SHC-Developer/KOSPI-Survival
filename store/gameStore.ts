@@ -89,8 +89,8 @@ interface GameStore extends GameState {
   marketClosingMessage: string | null; // 장 마감 메시지
   dayProgress: number; // 하루 진행률 (%)
   initialize: () => void;
-  loadFromFirebase: (cash: number, portfolio: { stockId: string; quantity: number; averagePrice: number }[], gameTick: number) => void;
-  getDataForFirebase: () => { cash: number; portfolio: { stockId: string; quantity: number; averagePrice: number }[]; gameTick: number };
+  loadFromFirebase: (cash: number, portfolio: { stockId: string; quantity: number; averagePrice: number }[], gameTick: number, cashGranted?: number) => void;
+  getDataForFirebase: () => { cash: number; cashGranted: number; portfolio: { stockId: string; quantity: number; averagePrice: number }[]; gameTick: number };
   // 주가 Firebase 동기화
   getStockPricesForFirebase: () => StockPriceData;
   loadStockPricesFromFirebase: (data: StockPriceDocument) => void;
@@ -442,6 +442,7 @@ export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => ({
       cash: INITIAL_CASH,
+      cashGranted: 0, // 관리자 지급 금액 (별도 추적)
       initialCash: INITIAL_CASH,
       portfolio: [],
       stocks: generateInitialStocks(),
@@ -475,7 +476,7 @@ export const useGameStore = create<GameStore>()(
         }
       },
 
-      loadFromFirebase: (cash, portfolio, gameTick) => {
+      loadFromFirebase: (cash, portfolio, gameTick, cashGranted = 0) => {
         // gameTick에서 currentDay와 dayTickCount 계산
         const currentDay = Math.floor(gameTick / TICKS_PER_DAY) + 1;
         const dayTickCount = gameTick % TICKS_PER_DAY;
@@ -486,6 +487,7 @@ export const useGameStore = create<GameStore>()(
         
         set({
           cash,
+          cashGranted, // 관리자 지급 금액 추적
           portfolio,
           gameTick,
           currentDay,
@@ -496,8 +498,8 @@ export const useGameStore = create<GameStore>()(
       },
 
       getDataForFirebase: () => {
-        const { cash, portfolio, gameTick } = get();
-        return { cash, portfolio, gameTick };
+        const { cash, cashGranted, portfolio, gameTick } = get();
+        return { cash, cashGranted, portfolio, gameTick };
       },
 
       // 주가 데이터를 Firebase에 저장할 형태로 변환

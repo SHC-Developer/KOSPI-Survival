@@ -71,6 +71,7 @@ export interface UserInfo {
 
 export interface UserGameData {
   cash: number;
+  cashGranted?: number; // 관리자 지급 금액 (별도 추적)
   portfolio: { stockId: string; quantity: number; averagePrice: number }[];
   gameTick: number;
   currentDay?: number; // 현재 게임 일수
@@ -112,6 +113,9 @@ interface AuthState {
   loadStockPrices: () => Promise<StockPriceDocument | null>;
   subscribeToStockPrices: (callback: (data: StockPriceDocument) => void) => () => void;
   subscribeToNewsEvents: (callback: (events: NewsEventData[]) => void) => () => void;
+  
+  // 홀짝 게임
+  subscribeToOddEvenGame: (callback: (data: any) => void) => () => void;
   
   // Server status
   getServerStatus: () => Promise<{ isRunning: boolean } | null>;
@@ -207,14 +211,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         lastUpdated: serverTimestamp()
       };
       
-      if (data.cash !== undefined) updateData.cash = data.cash;
+      // cash를 저장할 때 cashGranted를 빼서 baseCash만 저장
+      // 이렇게 해야 관리자 지급 금액이 덮어쓰여지지 않음
+      if (data.cash !== undefined) {
+        const cashGranted = data.cashGranted || 0;
+        updateData.cash = data.cash - cashGranted; // baseCash만 저장
+      }
       if (data.portfolio !== undefined) updateData.portfolio = data.portfolio;
       if (data.gameTick !== undefined) updateData.gameTick = data.gameTick;
       if (data.currentDay !== undefined) updateData.currentDay = data.currentDay;
       if (data.totalAsset !== undefined) updateData.totalAsset = data.totalAsset;
       
       await updateDoc(doc(db, 'users', user.uid), updateData);
-      console.log('[Firebase] Game data saved:', { gameTick: data.gameTick, currentDay: data.currentDay });
+      console.log('[Firebase] Game data saved:', { 
+        gameTick: data.gameTick, 
+        currentDay: data.currentDay,
+        baseCash: updateData.cash,
+        cashGranted: data.cashGranted
+      });
     } catch (error) {
       console.error('Error saving game data:', error);
     }
@@ -234,22 +248,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           ? data.nickname 
           : null;
         
+        // 관리자 지급 금액 포함
+        const baseCash = data.cash || 0;
+        const cashGranted = data.cashGranted || 0;
+        const totalCash = baseCash + cashGranted;
+        
         console.log('[Firebase] Loaded game data:', { 
           gameTick: data.gameTick, 
           currentDay: data.currentDay,
           nickname: nickname,
           rawNickname: data.nickname,
-          cash: data.cash 
+          baseCash: baseCash,
+          cashGranted: cashGranted,
+          totalCash: totalCash
         });
         
         return {
-          cash: data.cash,
+          cash: totalCash,
+          cashGranted: cashGranted, // 별도로 추적
           portfolio: data.portfolio || [],
           gameTick: data.gameTick || 0,
           currentDay: data.currentDay || 1,
           nickname: nickname,
           nicknameLastChanged: data.nicknameLastChanged?.toDate() || null,
-          totalAsset: data.totalAsset || data.cash || 0,
+          totalAsset: data.totalAsset || totalCash || 0,
           lastUpdated: data.lastUpdated?.toDate() || null
         };
       }
@@ -413,12 +435,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       
       if (!userSnap.exists()) return false;
       
-      const currentCash = userSnap.data().cash || 0;
+      // cashGranted 필드에 누적 (saveGameData에서 덮어쓰지 않음)
+      const currentGranted = userSnap.data().cashGranted || 0;
       await updateDoc(userRef, {
-        cash: currentCash + amount,
+        cashGranted: currentGranted + amount,
         lastUpdated: serverTimestamp()
       });
       
+      console.log(`[Admin] Cash granted to ${uid}: ${amount} (total granted: ${currentGranted + amount})`);
       return true;
     } catch (error) {
       console.error('Error adding cash to user:', error);
@@ -553,6 +577,34 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       },
       (error) => {
         console.error('News events sync error:', error);
+      }
+    );
+    
+    return unsubscribe;
+  },
+
+  // 홀짝 게임 실시간 구독
+  subscribeToOddEvenGame: (callback: (data: any) => void) => {
+    const oddEvenRef = doc(db, 'game', 'oddEven');
+    const unsubscribe = onSnapshot(
+      oddEvenRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          console.log('[Firebase] OddEven game state received', { phase: data.phase, roundId: data.roundId });
+          callback({
+            roundId: data.roundId,
+            phase: data.phase,
+            bettingEndTime: data.bettingEndTime,
+            result: data.result,
+            nextRoundTime: data.nextRoundTime,
+            totalOddBets: data.totalOddBets || 0,
+            totalEvenBets: data.totalEvenBets || 0
+          });
+        }
+      },
+      (error) => {
+        console.error('OddEven game sync error:', error);
       }
     );
     
