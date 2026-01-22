@@ -52,7 +52,7 @@ export const STOCK_CONFIGS: StockConfig[] = [
   },
   {
     id: '2',
-    name: 'SK하이민석석',
+    name: 'SK하이민석',
     symbol: '000660',
     type: 'bluechip',
     initialPrice: 185000,
@@ -65,7 +65,7 @@ export const STOCK_CONFIGS: StockConfig[] = [
   // 작전주 2개 (theme)
   {
     id: '3',
-    name: '성빈빈바이오',
+    name: '성빈바이오',
     symbol: '900010',
     type: 'theme',
     initialPrice: 8500,
