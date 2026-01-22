@@ -77,6 +77,7 @@ interface ExecutedOrder {
 }
 
 interface GameStore extends GameState {
+  cashGranted: number; // 관리자 지급 금액
   transactions: TransactionRecord[];
   realizedPnL: number;
   pendingOrders: PendingOrder[];
@@ -603,7 +604,7 @@ export const useGameStore = create<GameStore>()(
         
         const remainingOrders = pendingOrders.filter(o => remainingOrderIds.includes(o.id));
         
-        const updates: Partial<GameState> = { 
+        const updates: Partial<GameStore> = { 
           stocks: updatedStocks,
           pendingOrders: remainingOrders
         };
