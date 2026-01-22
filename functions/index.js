@@ -527,12 +527,16 @@ async function runMarketLoop(loopId) {
         if (tradingHalted && haltedUntilTick !== null && gameTick >= haltedUntilTick) {
           // 거래정지 해제 시 전일 종가를 현재가로 업데이트 (전일대비 % 초기화)
           const currentPrice = stock.currentPrice;
-          console.log(`[${loopId}] ${config.name} 거래정지 해제 (tick ${gameTick}) - 전일 종가 업데이트: ${currentPrice}원`);
+          const newUpperLimit = Math.round(currentPrice * DAILY_UPPER_LIMIT);
+          const newLowerLimit = Math.round(currentPrice * DAILY_LOWER_LIMIT);
+          console.log(`[${loopId}] ${config.name} 거래정지 해제 (tick ${gameTick}) - 전일 종가 업데이트: ${currentPrice}원, 상한가: ${newUpperLimit}원, 하한가: ${newLowerLimit}원`);
           
           prices[config.id] = {
             ...stock,
             previousClose: currentPrice, // 전일 종가를 현재가로 업데이트
             openPrice: currentPrice, // 시가도 현재가로 업데이트
+            upperLimit: newUpperLimit, // 상한가 재설정
+            lowerLimit: newLowerLimit, // 하한가 재설정
             tradingHalted: false,
             haltedUntilTick: null,
             haltedAtTick: null,
