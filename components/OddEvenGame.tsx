@@ -25,6 +25,7 @@ interface OddEvenGameState {
   nextRoundTime?: number; // 다음 라운드 시작 시간
   totalOddBets: number;
   totalEvenBets: number;
+  resultHistory?: ('odd' | 'even')[]; // 최근 10개 결과 히스토리
 }
 
 interface MyBet {
@@ -71,10 +72,11 @@ const OddEvenGame: React.FC<OddEvenGameProps> = ({ onBack }) => {
           const won = myBet.choice === data.result;
           setLastRoundResult({ won, amount: myBet.amount });
           
-          // 이겼으면 2배 지급 (원금 + 상금)
+          // 이겼으면 2배 지급 (배팅 시 이미 차감되었으므로 2배를 더함)
           if (won) {
             const { cash: currentCash, cashGranted: currentCashGranted, portfolio, gameTick, currentDay } = useGameStore.getState();
-            const newCash = currentCash + myBet.amount; // 배팅금 + 상금 (2배이므로 원금 + 원금)
+            const winnings = myBet.amount * 2; // 원금 + 상금 = 2배
+            const newCash = currentCash + winnings;
             useGameStore.setState({ cash: newCash });
             saveGameData({
               cash: newCash,
@@ -85,6 +87,7 @@ const OddEvenGame: React.FC<OddEvenGameProps> = ({ onBack }) => {
               lastUpdated: new Date()
             });
           }
+          // 졌으면 이미 배팅 시 차감되었으므로 추가 처리 없음
         }
         
         // 3초 후 애니메이션 종료
@@ -273,66 +276,66 @@ const OddEvenGame: React.FC<OddEvenGameProps> = ({ onBack }) => {
             </div>
           )}
 
-          {/* 홀짝 선택 UI (사다리 스타일) */}
-          <div className="relative bg-[#F5F0E8] rounded-2xl p-6 mb-6 shadow-lg" style={{ minHeight: '320px' }}>
-            {/* 상단 시작점 */}
-            <div className="flex justify-between px-8 mb-4">
-              <div className="w-12 h-12 rounded-full bg-gray-400 flex items-center justify-center shadow-md">
-                <span className="text-gray-800 font-bold">×</span>
-              </div>
-              <div className="w-12 h-12 rounded-full bg-gray-400 flex items-center justify-center shadow-md">
-                <span className="text-gray-800 font-bold">×</span>
-              </div>
+          {/* 최근 결과 히스토리 */}
+          <div className="bg-gray-800/50 rounded-xl p-4 mb-6 border border-gray-700">
+            <div className="text-center text-gray-400 text-sm mb-3">최근 결과</div>
+            <div className="flex justify-center gap-2 flex-wrap">
+              {gameState?.resultHistory && gameState.resultHistory.length > 0 ? (
+                gameState.resultHistory.map((result, index) => (
+                  <div
+                    key={index}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold ${
+                      result === 'odd' ? 'bg-blue-500' : 'bg-red-500'
+                    }`}
+                  >
+                    {result === 'odd' ? '홀' : '짝'}
+                  </div>
+                ))
+              ) : (
+                <span className="text-gray-500 text-sm">결과 없음</span>
+              )}
             </div>
+            {gameState?.resultHistory && gameState.resultHistory.length > 0 && (
+              <div className="flex justify-center gap-4 mt-3 text-xs">
+                <span className="text-blue-400">
+                  홀: {gameState.resultHistory.filter(r => r === 'odd').length}회
+                </span>
+                <span className="text-red-400">
+                  짝: {gameState.resultHistory.filter(r => r === 'even').length}회
+                </span>
+              </div>
+            )}
+          </div>
 
-            {/* 사다리 */}
-            <div className="relative h-48 mx-8">
-              {/* 세로 줄 */}
-              <div className="absolute left-0 top-0 bottom-0 w-1 bg-gray-500 rounded"></div>
-              <div className="absolute right-0 top-0 bottom-0 w-1 bg-gray-500 rounded"></div>
-              
-              {/* 가로 줄 */}
-              <div className="absolute left-0 right-0 top-[20%] h-1 bg-gray-500 rounded"></div>
-              <div className="absolute left-0 right-0 top-[40%] h-1 bg-gray-500 rounded"></div>
-              <div className="absolute left-0 right-0 top-[60%] h-1 bg-gray-500 rounded"></div>
-              <div className="absolute left-0 right-0 top-[80%] h-1 bg-gray-500 rounded"></div>
-            </div>
-
-            {/* 하단 선택 버튼 */}
-            <div className="flex justify-between px-4 mt-4">
+          {/* 홀짝 선택 UI */}
+          <div className="bg-gray-800/50 rounded-xl p-6 mb-6 border border-gray-700">
+            <div className="text-center text-gray-400 text-sm mb-4">선택하세요</div>
+            <div className="flex justify-center gap-8">
               <button
                 onClick={() => canBet && setSelectedChoice('odd')}
                 disabled={!canBet}
-                className={`w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-lg transition-all transform ${
+                className={`w-24 h-24 rounded-2xl flex flex-col items-center justify-center text-white font-bold transition-all transform ${
                   selectedChoice === 'odd' 
-                    ? 'bg-blue-600 scale-110 ring-4 ring-blue-400 ring-opacity-50' 
+                    ? 'bg-blue-600 scale-110 ring-4 ring-blue-400 ring-opacity-50 shadow-lg shadow-blue-500/50' 
                     : 'bg-blue-500 hover:bg-blue-600'
-                } ${!canBet ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'} shadow-lg`}
+                } ${!canBet ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
               >
-                홀
+                <span className="text-3xl mb-1">🔵</span>
+                <span className="text-xl">홀</span>
               </button>
               <button
                 onClick={() => canBet && setSelectedChoice('even')}
                 disabled={!canBet}
-                className={`w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-lg transition-all transform ${
+                className={`w-24 h-24 rounded-2xl flex flex-col items-center justify-center text-white font-bold transition-all transform ${
                   selectedChoice === 'even' 
-                    ? 'bg-red-600 scale-110 ring-4 ring-red-400 ring-opacity-50' 
+                    ? 'bg-red-600 scale-110 ring-4 ring-red-400 ring-opacity-50 shadow-lg shadow-red-500/50' 
                     : 'bg-red-500 hover:bg-red-600'
-                } ${!canBet ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'} shadow-lg`}
+                } ${!canBet ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
               >
-                짝
+                <span className="text-3xl mb-1">🔴</span>
+                <span className="text-xl">짝</span>
               </button>
             </div>
-
-            {/* 이전 결과 표시 */}
-            {gameState?.result && !resultAnimation && (
-              <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-gray-900/80 rounded-lg px-4 py-2">
-                <span className="text-xs text-gray-400">이전 결과: </span>
-                <span className={`font-bold ${gameState.result === 'odd' ? 'text-blue-400' : 'text-red-400'}`}>
-                  {gameState.result === 'odd' ? '홀' : '짝'}
-                </span>
-              </div>
-            )}
           </div>
 
           {/* 배팅 금액 조절 */}

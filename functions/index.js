@@ -340,13 +340,19 @@ async function updateOddEvenGame() {
     // 배팅 시간이 끝났고 아직 결과가 없으면 결과 생성
     if (gameData.phase === 'betting' && now >= gameData.bettingEndTime) {
       const result = Math.random() < 0.5 ? 'odd' : 'even';
+      
+      // 최근 10개 결과 히스토리 업데이트
+      const currentHistory = gameData.resultHistory || [];
+      const newHistory = [result, ...currentHistory].slice(0, 10); // 최신 결과를 앞에 추가, 10개만 유지
+      
       await gameRef.update({
         phase: 'result',
         result,
+        resultHistory: newHistory,
         nextRoundTime: now + ODD_EVEN_RESULT_DURATION,
         resultGeneratedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-      console.log(`[OddEven] Round ${gameData.roundId} result: ${result}`);
+      console.log(`[OddEven] Round ${gameData.roundId} result: ${result}, history: ${newHistory.length} items`);
       return;
     }
     
@@ -354,11 +360,14 @@ async function updateOddEvenGame() {
     if ((gameData.phase === 'result' || gameData.phase === 'waiting') && 
         gameData.nextRoundTime && now >= gameData.nextRoundTime) {
       const roundId = `round_${now}`;
+      // 히스토리는 유지
+      const resultHistory = gameData.resultHistory || [];
       await gameRef.set({
         roundId,
         phase: 'betting',
         bettingEndTime: now + ODD_EVEN_BETTING_DURATION,
         result: null,
+        resultHistory: resultHistory,
         nextRoundTime: null,
         totalOddBets: 0,
         totalEvenBets: 0,

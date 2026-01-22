@@ -41,7 +41,7 @@ export const STOCK_CONFIGS: StockConfig[] = [
   // 대형주 2개 (bluechip)
   {
     id: '1',
-    name: '삼성전자',
+    name: '상현전자',
     symbol: '005930',
     type: 'bluechip',
     initialPrice: 72000,
@@ -52,7 +52,7 @@ export const STOCK_CONFIGS: StockConfig[] = [
   },
   {
     id: '2',
-    name: 'SK하이닉스',
+    name: 'SK하이민석석',
     symbol: '000660',
     type: 'bluechip',
     initialPrice: 185000,
@@ -65,7 +65,7 @@ export const STOCK_CONFIGS: StockConfig[] = [
   // 작전주 2개 (theme)
   {
     id: '3',
-    name: '퀀텀바이오',
+    name: '성빈빈바이오',
     symbol: '900010',
     type: 'theme',
     initialPrice: 8500,
@@ -76,7 +76,7 @@ export const STOCK_CONFIGS: StockConfig[] = [
   },
   {
     id: '4',
-    name: 'AI솔루션',
+    name: '다음기술단(주)',
     symbol: '900020',
     type: 'theme',
     initialPrice: 15200,

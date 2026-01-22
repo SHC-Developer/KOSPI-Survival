@@ -591,7 +591,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          console.log('[Firebase] OddEven game state received', { phase: data.phase, roundId: data.roundId });
+          console.log('[Firebase] OddEven game state received', { phase: data.phase, roundId: data.roundId, historyCount: data.resultHistory?.length || 0 });
           callback({
             roundId: data.roundId,
             phase: data.phase,
@@ -599,7 +599,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             result: data.result,
             nextRoundTime: data.nextRoundTime,
             totalOddBets: data.totalOddBets || 0,
-            totalEvenBets: data.totalEvenBets || 0
+            totalEvenBets: data.totalEvenBets || 0,
+            resultHistory: data.resultHistory || []
           });
         }
       },
