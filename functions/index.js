@@ -474,14 +474,23 @@ async function runMarketLoop(loopId) {
       if (isNewsTime) {
         console.log(`[${loopId}] News event at tick ${tick}`);
         
-        const newsStockCount = Math.floor(Math.random() * 2) + 1;
-        const shuffledConfigs = [...STOCK_CONFIGS].sort(() => Math.random() - 0.5);
-        const selectedConfigs = shuffledConfigs.slice(0, newsStockCount);
-        
-        const newsEvents = selectedConfigs.map(config => {
+        // 상장폐지되지 않은 종목만 뉴스 대상으로 선택
+        const availableConfigs = STOCK_CONFIGS.filter(config => {
           const stock = prices[config.id];
-          return generateNewsEvent(stock, config, gameTick, currentDay);
+          return !stock.isDelisted && !stock.tradingHalted;
         });
+        
+        if (availableConfigs.length === 0) {
+          console.log(`[${loopId}] No available stocks for news (all delisted or halted)`);
+        } else {
+          const newsStockCount = Math.min(Math.floor(Math.random() * 2) + 1, availableConfigs.length);
+          const shuffledConfigs = [...availableConfigs].sort(() => Math.random() - 0.5);
+          const selectedConfigs = shuffledConfigs.slice(0, newsStockCount);
+          
+          const newsEvents = selectedConfigs.map(config => {
+            const stock = prices[config.id];
+            return generateNewsEvent(stock, config, gameTick, currentDay);
+          });
         
         // 기존 뉴스 가져오기
         const existingNewsDoc = await db.doc('game/newsEvents').get();
@@ -497,6 +506,7 @@ async function runMarketLoop(loopId) {
         });
         
         // 뉴스 점프는 applyAtTick에 도달했을 때 적용 (아래에서 처리)
+        }
       }
       
       // 1. 먼저 기본 OU 프로세스 주가 업데이트

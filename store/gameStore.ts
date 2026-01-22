@@ -521,8 +521,14 @@ export const useGameStore = create<GameStore>()(
 
       // Firebase에서 로드한 주가 데이터를 적용
       loadStockPricesFromFirebase: (data: StockPriceDocument) => {
-        const { stocks, pendingOrders, buyStock, sellStock, gameTick: currentGameTick } = get();
+        let { stocks, pendingOrders, buyStock, sellStock, gameTick: currentGameTick } = get();
         const prices = data.prices || data as unknown as StockPriceData; // 호환성을 위해
+        
+        // 서버가 초기화되었으면 (gameTick=0, currentDay=1) stocks도 새로 생성
+        if (data.gameTick === 0 && data.currentDay === 1) {
+          console.log('[GameStore] Server reset detected, regenerating stocks');
+          stocks = generateInitialStocks();
+        }
         
         const updatedStocks = stocks.map(stock => {
           const priceData = prices[stock.id];
