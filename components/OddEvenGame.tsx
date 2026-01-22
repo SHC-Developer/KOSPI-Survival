@@ -204,26 +204,18 @@ const OddEvenGame: React.FC<OddEvenGameProps> = ({ onBack }) => {
   const canBet = gameState?.phase === 'betting' && !myBet && countdown > 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900">
-      {/* 헤더 */}
-      <div className="fixed top-0 left-0 right-0 z-50 bg-gray-900/95 backdrop-blur border-b border-gray-800">
-        <div className="max-w-lg mx-auto flex items-center justify-between px-4 py-3">
-          <button 
-            onClick={onBack}
-            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-          >
-            <BackIcon />
-            <span className="text-sm">돌아가기</span>
-          </button>
+    <div className="h-full overflow-y-auto bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900">
+      {/* 페이지 타이틀 */}
+      <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800">
+        <div className="max-w-lg mx-auto flex items-center justify-center px-4 py-3">
           <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-red-400">
-            영혼의 홀/짝 게임
+            🎲 영혼의 홀/짝 게임
           </h1>
-          <div className="w-20" /> {/* 균형을 위한 spacer */}
         </div>
       </div>
 
       {/* 메인 컨텐츠 */}
-      <div className="pt-16 pb-8 px-4">
+      <div className="pb-4 px-4">
         <div className="max-w-lg mx-auto">
           
           {/* 잔액 표시 */}

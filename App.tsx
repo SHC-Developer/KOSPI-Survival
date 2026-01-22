@@ -214,7 +214,6 @@ const App: React.FC = () => {
   const [currentUserNickname, setCurrentUserNickname] = useState<string | null>(null);
   const shownNewsIdsRef = useRef<Set<string>>(new Set());
   const [showMarketClosedPopup, setShowMarketClosedPopup] = useState(true); // 장 마감 팝업 표시 여부
-  const [showOddEvenGame, setShowOddEvenGame] = useState(false); // 홀짝 게임 페이지 표시
   
   const { 
     user, 
@@ -553,6 +552,8 @@ const App: React.FC = () => {
         return <PortfolioPage />;
       case 'ranking':
         return <RankingPage />;
+      case 'oddeven':
+        return <OddEvenGame onBack={() => setPage('watchlist')} />;
       default:
         return <WatchlistPage />;
     }
@@ -609,12 +610,6 @@ const App: React.FC = () => {
               KOSPI Survival
             </h1>
             <span className="text-xs text-gray-500">Day {currentDay}</span>
-            <button
-              onClick={() => setShowOddEvenGame(true)}
-              className="ml-2 px-2 py-0.5 text-xs font-bold bg-gradient-to-r from-blue-500 to-red-500 text-white rounded-full hover:from-blue-400 hover:to-red-400 transition-all animate-pulse"
-            >
-              🎲 홀/짝
-            </button>
           </div>
           
           <div className="flex items-center gap-3">
@@ -652,22 +647,13 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* 홀짝 게임 페이지 */}
-      {showOddEvenGame && (
-        <OddEvenGame onBack={() => setShowOddEvenGame(false)} />
-      )}
-
       {/* 메인 컨텐츠 */}
-      {!showOddEvenGame && (
-        <>
-          <main className="flex-1 overflow-hidden pt-12 pb-16">
-            {renderPage()}
-          </main>
+      <main className="flex-1 overflow-hidden pt-12 pb-16">
+        {renderPage()}
+      </main>
 
-          {/* 하단 네비게이션 */}
-          <BottomNav />
-        </>
-      )}
+      {/* 하단 네비게이션 */}
+      <BottomNav />
 
       {/* 닉네임 설정 모달 */}
       {showNicknameModal && (

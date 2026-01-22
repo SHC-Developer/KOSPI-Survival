@@ -86,7 +86,7 @@ export interface NewsEvent {
 export type MarketStatus = 'OPEN' | 'CLOSED';
 
 // 페이지 타입
-export type PageType = 'watchlist' | 'price' | 'order' | 'portfolio' | 'ranking';
+export type PageType = 'watchlist' | 'price' | 'order' | 'portfolio' | 'ranking' | 'oddeven';
 
 export interface GameState {
   cash: number;

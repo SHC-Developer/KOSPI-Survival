@@ -27,10 +27,10 @@ const RELISTING_DAYS = 7; // 재상장까지의 일수
 
 // 종목 설정 (4개: 대형주 2개 + 작전주 2개)
 const STOCK_CONFIGS = [
-  { id: '1', name: '삼성전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03, jumpIntensity: 0.3 },
-  { id: '2', name: 'SK하이닉스', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04, jumpIntensity: 0.35 },
-  { id: '3', name: '퀀텀바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15, jumpIntensity: 0.4 },
-  { id: '4', name: 'AI솔루션', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18, jumpIntensity: 0.45 },
+  { id: '1', name: '상현전자', type: 'bluechip', initialPrice: 72000, meanPrice: 75000, kappa: 0.02, sigma: 0.03, jumpIntensity: 0.3 },
+  { id: '2', name: 'SK하이민석', type: 'bluechip', initialPrice: 185000, meanPrice: 190000, kappa: 0.025, sigma: 0.04, jumpIntensity: 0.35 },
+  { id: '3', name: '성빈바이오', type: 'theme', initialPrice: 8500, meanPrice: 7000, kappa: 0.05, sigma: 0.15, jumpIntensity: 0.4 },
+  { id: '4', name: '다음기술단(주)', type: 'theme', initialPrice: 15200, meanPrice: 12000, kappa: 0.06, sigma: 0.18, jumpIntensity: 0.45 },
 ];
 
 // 가짜 뉴스 확률 (30%)

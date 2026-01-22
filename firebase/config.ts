@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, browserLocalPersistence, setPersistence } from 'firebase/auth';
 import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { getFunctions } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: "AIzaSyCduaC_62G-G6Kzxl8Uo4PSWZtCW5T9pvM",
@@ -21,6 +22,9 @@ setPersistence(auth, browserLocalPersistence);
 
 // Initialize Firestore with offline persistence
 export const db = getFirestore(app);
+
+// Initialize Functions
+export const functions = getFunctions(app);
 
 // Enable offline persistence (오프라인에서도 동작)
 enableIndexedDbPersistence(db).catch((err) => {
