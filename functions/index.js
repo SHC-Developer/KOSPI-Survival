@@ -970,8 +970,8 @@ exports.continueMarketLoop = onRequest({
 // 다음 루프 트리거 함수
 function triggerNextLoop() {
   const options = {
-    hostname: 'asia-northeast3-kopsi-survival.cloudfunctions.net',
-    path: `/continueMarketLoop?secret=${INTERNAL_SECRET}`,
+    hostname: 'continuemarketloop-cjh4qz5npa-du.a.run.app',
+    path: `/?secret=${INTERNAL_SECRET}`,
     method: 'GET',
     timeout: 5000
   };
