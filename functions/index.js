@@ -307,6 +307,72 @@ function applyNewsJump(stock, jumpPercent) {
 // sleep 함수
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// ============== 홀짝 게임 실시간 관리 함수 ==============
+const ODD_EVEN_BETTING_DURATION = 30 * 1000; // 30초
+const ODD_EVEN_RESULT_DURATION = 5 * 1000; // 5초
+
+async function updateOddEvenGame() {
+  try {
+    const gameRef = db.doc('game/oddEven');
+    const gameSnap = await gameRef.get();
+    const now = Date.now();
+    
+    if (!gameSnap.exists) {
+      // 첫 게임 시작
+      const roundId = `round_${now}`;
+      await gameRef.set({
+        roundId,
+        phase: 'betting',
+        bettingEndTime: now + ODD_EVEN_BETTING_DURATION,
+        result: null,
+        nextRoundTime: null,
+        totalOddBets: 0,
+        totalEvenBets: 0,
+        bets: {},
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      console.log(`[OddEven] First round started: ${roundId}`);
+      return;
+    }
+    
+    const gameData = gameSnap.data();
+    
+    // 배팅 시간이 끝났고 아직 결과가 없으면 결과 생성
+    if (gameData.phase === 'betting' && now >= gameData.bettingEndTime) {
+      const result = Math.random() < 0.5 ? 'odd' : 'even';
+      await gameRef.update({
+        phase: 'result',
+        result,
+        nextRoundTime: now + ODD_EVEN_RESULT_DURATION,
+        resultGeneratedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      console.log(`[OddEven] Round ${gameData.roundId} result: ${result}`);
+      return;
+    }
+    
+    // 결과 표시 후 대기 시간이 끝났으면 새 라운드 시작
+    if ((gameData.phase === 'result' || gameData.phase === 'waiting') && 
+        gameData.nextRoundTime && now >= gameData.nextRoundTime) {
+      const roundId = `round_${now}`;
+      await gameRef.set({
+        roundId,
+        phase: 'betting',
+        bettingEndTime: now + ODD_EVEN_BETTING_DURATION,
+        result: null,
+        nextRoundTime: null,
+        totalOddBets: 0,
+        totalEvenBets: 0,
+        bets: {},
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      console.log(`[OddEven] New round started: ${roundId}`);
+      return;
+    }
+  } catch (error) {
+    console.error('[OddEven] Update error:', error);
+  }
+}
+
 // ============== 30분 루프 실행 함수 (공통 로직) ==============
 async function runMarketLoop(loopId) {
   const cycleStartTime = Date.now();
@@ -630,6 +696,9 @@ async function runMarketLoop(loopId) {
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
       
+      // 홀짝 게임 상태 관리 (매 틱마다)
+      await updateOddEvenGame();
+      
       // 다음 틱까지 대기
       if (tick < MARKET_DURATION - 1) {
         const nextTargetTime = cycleStartTime + ((tick + 1) * 1000);
@@ -929,22 +998,31 @@ exports.continueMarketLoop = onRequest({
         return;
       }
       
-      // 휴장 시간 (카운트다운)
+      // 휴장 시간 (카운트다운) - 1초 단위로 홀짝 게임도 업데이트
       console.log(`[continueMarketLoop] Market closed. Waiting ${CLOSING_DURATION}s...`);
       
-      for (let countdown = CLOSING_DURATION; countdown > 0; countdown -= 10) {
-        await db.doc('game/stockPrices').update({
-          marketClosingMessage: `📢 장이 마감되었습니다. ${countdown}초 후 다음 장이 개장합니다.`,
-        });
-        
-        const checkDoc = await db.doc('game/serverStatus').get();
-        const checkData = checkDoc.exists ? checkDoc.data() : { isRunning: false };
-        if (!checkData.isRunning || checkData.currentLoopId !== loopId) {
-          res.status(200).send('Server stopped during closing');
-          return;
+      for (let countdown = CLOSING_DURATION; countdown > 0; countdown--) {
+        // 10초마다 메시지 업데이트
+        if (countdown % 10 === 0 || countdown <= 5) {
+          await db.doc('game/stockPrices').update({
+            marketClosingMessage: `📢 장이 마감되었습니다. ${countdown}초 후 다음 장이 개장합니다.`,
+          });
         }
         
-        await sleep(Math.min(10, countdown) * 1000);
+        // 서버 상태 확인 (10초마다)
+        if (countdown % 10 === 0) {
+          const checkDoc = await db.doc('game/serverStatus').get();
+          const checkData = checkDoc.exists ? checkDoc.data() : { isRunning: false };
+          if (!checkData.isRunning || checkData.currentLoopId !== loopId) {
+            res.status(200).send('Server stopped during closing');
+            return;
+          }
+        }
+        
+        // 홀짝 게임 업데이트 (매초)
+        await updateOddEvenGame();
+        
+        await sleep(1000);
       }
     }
     
