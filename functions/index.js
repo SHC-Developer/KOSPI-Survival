@@ -934,7 +934,24 @@ exports.resetStockPrices = onCall({
     throw new HttpsError('permission-denied', 'Only admin can reset stock prices');
   }
   
-  // 주가 초기화
+  // 1. 먼저 현재 서버 상태 확인
+  const serverStatusDoc = await db.doc('game/serverStatus').get();
+  const wasRunning = serverStatusDoc.exists && serverStatusDoc.data().isRunning;
+  
+  // 2. 서버 중지 (현재 루프 종료)
+  if (wasRunning) {
+    await db.doc('game/serverStatus').update({
+      isRunning: false,
+      currentLoopId: null,
+      stoppedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    console.log('[resetStockPrices] Server stopped for reset');
+    
+    // 잠시 대기 (루프가 종료될 시간)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  
+  // 3. 주가 초기화
   await db.doc('game/stockPrices').set({
     prices: getInitialPrices(),
     gameTick: 0,
@@ -944,13 +961,27 @@ exports.resetStockPrices = onCall({
     lastUpdated: admin.firestore.FieldValue.serverTimestamp()
   });
   
-  // 뉴스 데이터도 초기화
+  // 4. 뉴스 데이터도 초기화
   await db.doc('game/newsEvents').set({
     events: [],
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   });
   
-  return { success: true, message: 'Stock prices and news reset' };
+  // 5. 서버가 실행 중이었으면 다시 시작
+  if (wasRunning) {
+    const newLoopId = `reset-${Date.now()}`;
+    await db.doc('game/serverStatus').set({
+      isRunning: true,
+      currentLoopId: newLoopId,
+      startedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    console.log('[resetStockPrices] Server restarting with new loop:', newLoopId);
+    
+    // 새 루프 트리거
+    triggerNextLoop();
+  }
+  
+  return { success: true, message: 'Stock prices and news reset, server restarted' };
 });
 
 // ============== 자동 재시작용 HTTP Endpoint ==============
