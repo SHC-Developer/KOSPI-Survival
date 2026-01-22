@@ -228,7 +228,8 @@ const App: React.FC = () => {
     canChangeNickname,
     loadStockPrices,
     subscribeToStockPrices,
-    subscribeToNewsEvents
+    subscribeToNewsEvents,
+    startRealtimeSync
   } = useAuthStore();
   
   const saveIntervalRef = useRef<number | null>(null);
@@ -331,9 +332,48 @@ const App: React.FC = () => {
     };
   }, [user, dataLoaded, subscribeToNewsEvents, setNewsEvents]);
 
-  // 실시간 동기화는 비활성화 - 로컬 게임 상태가 Firebase에 의해 덮어씌워지는 문제 방지
-  // Firebase는 10초마다 저장만 하고, 로드는 페이지 로드 시 한 번만 수행
-  // 다른 탭/기기에서의 변경사항 동기화가 필요하면 별도 로직 필요
+  // 사용자 데이터 실시간 동기화 (cash, cashGranted만)
+  // 관리자 지급 금액이나 Firebase에서 직접 수정한 값이 즉시 반영됨
+  useEffect(() => {
+    if (!user || !dataLoaded) return;
+    
+    console.log('[App] Starting realtime sync for user data');
+    const unsubscribe = startRealtimeSync((data) => {
+      // cash와 cashGranted만 실시간으로 업데이트
+      // gameTick이나 currentDay는 서버에서 관리하므로 무시
+      const currentState = useGameStore.getState();
+      
+      // Firebase에서 받은 cash/cashGranted가 다르면 업데이트
+      if (data.cash !== currentState.cash || data.cashGranted !== currentState.cashGranted) {
+        console.log('[App] Realtime cash update:', { 
+          old: { cash: currentState.cash, cashGranted: currentState.cashGranted },
+          new: { cash: data.cash, cashGranted: data.cashGranted }
+        });
+        useGameStore.setState({ 
+          cash: data.cash, 
+          cashGranted: data.cashGranted 
+        });
+        // lastSavedDataRef도 업데이트하여 불필요한 재저장 방지
+        if (lastSavedDataRef.current) {
+          lastSavedDataRef.current.cash = data.cash;
+        }
+      }
+      
+      // portfolio도 실시간으로 업데이트 (다른 기기에서 거래한 경우)
+      if (JSON.stringify(data.portfolio) !== JSON.stringify(currentState.portfolio)) {
+        console.log('[App] Realtime portfolio update');
+        useGameStore.setState({ portfolio: data.portfolio });
+        if (lastSavedDataRef.current) {
+          lastSavedDataRef.current.portfolio = data.portfolio;
+        }
+      }
+    });
+    
+    return () => {
+      console.log('[App] Stopping realtime sync');
+      unsubscribe();
+    };
+  }, [user, dataLoaded, startRealtimeSync]);
 
   // 총잔고 계산 (메모이제이션)
   const totalAsset = useMemo(() => {

@@ -296,17 +296,29 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
+          // loadGameData와 동일한 로직: baseCash + cashGranted = totalCash
+          const baseCash = data.cash || 0;
+          const cashGranted = data.cashGranted || 0;
+          const totalCash = baseCash + cashGranted;
+          
           const gameData: UserGameData = {
-            cash: data.cash,
+            cash: totalCash,
+            cashGranted: cashGranted, // 별도로 추적
             portfolio: data.portfolio || [],
             gameTick: data.gameTick || 0,
             currentDay: data.currentDay || 1,
             nickname: data.nickname || null,
             nicknameLastChanged: data.nicknameLastChanged?.toDate() || null,
-            totalAsset: data.totalAsset || data.cash || 0,
+            totalAsset: data.totalAsset || totalCash || 0,
             lastUpdated: data.lastUpdated?.toDate() || null
           };
-          console.log('[Firebase] Realtime update received:', { gameTick: data.gameTick, currentDay: data.currentDay });
+          console.log('[Firebase] Realtime update received:', { 
+            gameTick: data.gameTick, 
+            currentDay: data.currentDay,
+            baseCash,
+            cashGranted,
+            totalCash
+          });
           onDataChange(gameData);
         }
       },
