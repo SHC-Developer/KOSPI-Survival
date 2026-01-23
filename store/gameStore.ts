@@ -1255,9 +1255,8 @@ export const useGameStore = create<GameStore>()(
     }),
     {
       name: 'kospi-survival-storage',
+      // portfolio는 Firebase에서만 로드 (로컬 스토리지와 충돌 방지)
       partialize: (state) => ({ 
-        cash: state.cash, 
-        portfolio: state.portfolio, 
         gameTick: state.gameTick,
         currentDay: state.currentDay,
         realizedPnL: state.realizedPnL,
