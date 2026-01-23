@@ -196,6 +196,11 @@ function updatePriceOU(stock, config) {
   
   let logReturn = meanReversion + randomNoise + trendContribution;
   
+  // 하락 시 1.3배 증폭 (레버리지 밸런스 조정)
+  if (logReturn < 0) {
+    logReturn = logReturn * 1.3;
+  }
+  
   // 캡 적용
   const logCap = Math.log(1 + tickCap);
   logReturn = Math.max(-logCap, Math.min(logCap, logReturn));
@@ -256,7 +261,9 @@ function generateNewsEvent(stock, config, gameTick, currentDay) {
     jumpPercent = (0.20 + Math.random() * 0.40) * config.jumpIntensity;
   }
   
-  if (!isGood) jumpPercent = -jumpPercent;
+  if (!isGood) {
+    jumpPercent = -jumpPercent * 1.3; // 하락 시 1.3배 증폭 (레버리지 밸런스 조정)
+  }
   
   // 가짜 뉴스인 경우: 역방향 또는 효과 감소
   let actualJumpPercent = jumpPercent;
