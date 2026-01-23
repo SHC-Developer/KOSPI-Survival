@@ -72,7 +72,14 @@ export interface UserInfo {
 export interface UserGameData {
   cash: number;
   cashGranted?: number; // 관리자 지급 금액 (별도 추적)
-  portfolio: { stockId: string; quantity: number; averagePrice: number }[];
+  portfolio: { 
+    stockId: string; 
+    quantity: number; 
+    averagePrice: number;
+    leverage?: number; // 레버리지 배율
+    entryPrice?: number; // 레버리지 진입가
+    liquidationPrice?: number; // 청산가
+  }[];
   gameTick: number;
   currentDay?: number; // 현재 게임 일수
   lastUpdated: Date | null;
@@ -113,9 +120,6 @@ interface AuthState {
   loadStockPrices: () => Promise<StockPriceDocument | null>;
   subscribeToStockPrices: (callback: (data: StockPriceDocument) => void) => () => void;
   subscribeToNewsEvents: (callback: (events: NewsEventData[]) => void) => () => void;
-  
-  // 홀짝 게임
-  subscribeToOddEvenGame: (callback: (data: any) => void) => () => void;
   
   // Server status
   getServerStatus: () => Promise<{ isRunning: boolean } | null>;
@@ -589,35 +593,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       },
       (error) => {
         console.error('News events sync error:', error);
-      }
-    );
-    
-    return unsubscribe;
-  },
-
-  // 홀짝 게임 실시간 구독
-  subscribeToOddEvenGame: (callback: (data: any) => void) => {
-    const oddEvenRef = doc(db, 'game', 'oddEven');
-    const unsubscribe = onSnapshot(
-      oddEvenRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          console.log('[Firebase] OddEven game state received', { phase: data.phase, roundId: data.roundId, historyCount: data.resultHistory?.length || 0 });
-          callback({
-            roundId: data.roundId,
-            phase: data.phase,
-            bettingEndTime: data.bettingEndTime,
-            result: data.result,
-            nextRoundTime: data.nextRoundTime,
-            totalOddBets: data.totalOddBets || 0,
-            totalEvenBets: data.totalEvenBets || 0,
-            resultHistory: data.resultHistory || []
-          });
-        }
-      },
-      (error) => {
-        console.error('OddEven game sync error:', error);
       }
     );
     

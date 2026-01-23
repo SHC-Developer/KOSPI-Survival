@@ -9,7 +9,6 @@ import PortfolioPage from './components/PortfolioPage';
 import RankingPage from './components/RankingPage';
 import AuthPage from './components/AuthPage';
 import AdminPage from './components/AdminPage';
-import OddEvenGame from './components/OddEvenGame';
 import { NewsEvent } from './types';
 
 // Icons
@@ -592,8 +591,6 @@ const App: React.FC = () => {
         return <PortfolioPage />;
       case 'ranking':
         return <RankingPage />;
-      case 'oddeven':
-        return <OddEvenGame onBack={() => setPage('watchlist')} />;
       default:
         return <WatchlistPage />;
     }

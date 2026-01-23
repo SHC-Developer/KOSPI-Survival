@@ -307,81 +307,6 @@ function applyNewsJump(stock, jumpPercent) {
 // sleep 함수
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// ============== 홀짝 게임 실시간 관리 함수 ==============
-const ODD_EVEN_BETTING_DURATION = 30 * 1000; // 30초
-const ODD_EVEN_RESULT_DURATION = 5 * 1000; // 5초
-
-async function updateOddEvenGame() {
-  try {
-    const gameRef = db.doc('game/oddEven');
-    const gameSnap = await gameRef.get();
-    const now = Date.now();
-    
-    if (!gameSnap.exists) {
-      // 첫 게임 시작
-      const roundId = `round_${now}`;
-      await gameRef.set({
-        roundId,
-        phase: 'betting',
-        bettingEndTime: now + ODD_EVEN_BETTING_DURATION,
-        result: null,
-        nextRoundTime: null,
-        totalOddBets: 0,
-        totalEvenBets: 0,
-        bets: {},
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      console.log(`[OddEven] First round started: ${roundId}`);
-      return;
-    }
-    
-    const gameData = gameSnap.data();
-    
-    // 배팅 시간이 끝났고 아직 결과가 없으면 결과 생성
-    if (gameData.phase === 'betting' && now >= gameData.bettingEndTime) {
-      const result = Math.random() < 0.5 ? 'odd' : 'even';
-      
-      // 최근 10개 결과 히스토리 업데이트
-      const currentHistory = gameData.resultHistory || [];
-      const newHistory = [result, ...currentHistory].slice(0, 10); // 최신 결과를 앞에 추가, 10개만 유지
-      
-      await gameRef.update({
-        phase: 'result',
-        result,
-        resultHistory: newHistory,
-        nextRoundTime: now + ODD_EVEN_RESULT_DURATION,
-        resultGeneratedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      console.log(`[OddEven] Round ${gameData.roundId} result: ${result}, history: ${newHistory.length} items`);
-      return;
-    }
-    
-    // 결과 표시 후 대기 시간이 끝났으면 새 라운드 시작
-    if ((gameData.phase === 'result' || gameData.phase === 'waiting') && 
-        gameData.nextRoundTime && now >= gameData.nextRoundTime) {
-      const roundId = `round_${now}`;
-      // 히스토리는 유지
-      const resultHistory = gameData.resultHistory || [];
-      await gameRef.set({
-        roundId,
-        phase: 'betting',
-        bettingEndTime: now + ODD_EVEN_BETTING_DURATION,
-        result: null,
-        resultHistory: resultHistory,
-        nextRoundTime: null,
-        totalOddBets: 0,
-        totalEvenBets: 0,
-        bets: {},
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      console.log(`[OddEven] New round started: ${roundId}`);
-      return;
-    }
-  } catch (error) {
-    console.error('[OddEven] Update error:', error);
-  }
-}
-
 // ============== 30분 루프 실행 함수 (공통 로직) ==============
 async function runMarketLoop(loopId) {
   const cycleStartTime = Date.now();
@@ -719,9 +644,6 @@ async function runMarketLoop(loopId) {
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       });
       
-      // 홀짝 게임 상태 관리 (매 틱마다)
-      await updateOddEvenGame();
-      
       // 다음 틱까지 대기
       if (tick < MARKET_DURATION - 1) {
         const nextTargetTime = cycleStartTime + ((tick + 1) * 1000);
@@ -1033,7 +955,7 @@ exports.continueMarketLoop = onRequest({
         return;
       }
       
-      // 휴장 시간 (카운트다운) - 1초 단위로 홀짝 게임도 업데이트
+      // 휴장 시간 (카운트다운)
       console.log(`[continueMarketLoop] Market closed. Waiting ${CLOSING_DURATION}s...`);
       
       for (let countdown = CLOSING_DURATION; countdown > 0; countdown--) {
@@ -1053,9 +975,6 @@ exports.continueMarketLoop = onRequest({
             return;
           }
         }
-        
-        // 홀짝 게임 업데이트 (매초)
-        await updateOddEvenGame();
         
         await sleep(1000);
       }
@@ -1104,185 +1023,3 @@ function triggerNextLoop() {
   
   req.end();
 }
-
-// ==================== 홀짝 게임 ====================
-
-const BETTING_DURATION = 30; // 배팅 시간 30초
-const RESULT_DURATION = 5; // 결과 표시 후 대기 시간 5초
-
-// 홀짝 게임 라운드 시작/관리 (스케줄러로 실행)
-exports.manageOddEvenGame = onSchedule({
-  schedule: 'every 1 minutes',
-  timeZone: 'Asia/Seoul',
-  timeoutSeconds: 60,
-  memory: '256MiB'
-}, async (event) => {
-  const gameRef = db.doc('game/oddEven');
-  const gameSnap = await gameRef.get();
-  const now = Date.now();
-  
-  if (!gameSnap.exists) {
-    // 첫 게임 시작
-    await startNewOddEvenRound(gameRef, now);
-    return;
-  }
-  
-  const gameData = gameSnap.data();
-  
-  // 배팅 시간이 끝났고 아직 결과가 없으면 결과 생성
-  if (gameData.phase === 'betting' && now >= gameData.bettingEndTime) {
-    await generateOddEvenResult(gameRef, gameData, now);
-    return;
-  }
-  
-  // 결과 표시 후 대기 시간이 끝났으면 새 라운드 시작
-  if ((gameData.phase === 'result' || gameData.phase === 'waiting') && 
-      gameData.nextRoundTime && now >= gameData.nextRoundTime) {
-    await startNewOddEvenRound(gameRef, now);
-    return;
-  }
-});
-
-// 새 홀짝 라운드 시작
-async function startNewOddEvenRound(gameRef, now) {
-  const roundId = `round_${now}`;
-  const bettingEndTime = now + (BETTING_DURATION * 1000);
-  
-  await gameRef.set({
-    roundId,
-    phase: 'betting',
-    bettingEndTime,
-    result: null,
-    nextRoundTime: null,
-    totalOddBets: 0,
-    totalEvenBets: 0,
-    bets: {}, // userId -> { choice, amount }
-    createdAt: admin.firestore.FieldValue.serverTimestamp()
-  });
-  
-  console.log(`[OddEven] New round started: ${roundId}`);
-}
-
-// 홀짝 결과 생성
-async function generateOddEvenResult(gameRef, gameData, now) {
-  // 50:50 확률로 결과 생성
-  const result = Math.random() < 0.5 ? 'odd' : 'even';
-  const nextRoundTime = now + (RESULT_DURATION * 1000);
-  
-  await gameRef.update({
-    phase: 'result',
-    result,
-    nextRoundTime,
-    resultGeneratedAt: admin.firestore.FieldValue.serverTimestamp()
-  });
-  
-  console.log(`[OddEven] Round ${gameData.roundId} result: ${result}`);
-  
-  // 5초 후 waiting 상태로 변경
-  setTimeout(async () => {
-    try {
-      const currentSnap = await gameRef.get();
-      if (currentSnap.exists && currentSnap.data().roundId === gameData.roundId) {
-        await gameRef.update({
-          phase: 'waiting'
-        });
-      }
-    } catch (e) {
-      console.error('[OddEven] Error updating to waiting:', e);
-    }
-  }, RESULT_DURATION * 1000);
-}
-
-// 배팅하기 (클라이언트에서 호출)
-exports.placeOddEvenBet = onCall({
-  timeoutSeconds: 30,
-  memory: '256MiB'
-}, async (request) => {
-  const { choice, amount, roundId } = request.data;
-  const userId = request.auth?.uid;
-  
-  if (!userId) {
-    throw new functions.https.HttpsError('unauthenticated', '로그인이 필요합니다.');
-  }
-  
-  if (!choice || !['odd', 'even'].includes(choice)) {
-    throw new functions.https.HttpsError('invalid-argument', '홀 또는 짝을 선택해주세요.');
-  }
-  
-  if (!amount || amount < 100000 || amount > 1000000 || amount % 100000 !== 0) {
-    throw new functions.https.HttpsError('invalid-argument', '배팅 금액은 10만원~100만원 (10만원 단위)입니다.');
-  }
-  
-  const gameRef = db.doc('game/oddEven');
-  
-  return await db.runTransaction(async (transaction) => {
-    const gameSnap = await transaction.get(gameRef);
-    
-    if (!gameSnap.exists) {
-      throw new functions.https.HttpsError('failed-precondition', '게임이 시작되지 않았습니다.');
-    }
-    
-    const gameData = gameSnap.data();
-    
-    if (gameData.phase !== 'betting') {
-      throw new functions.https.HttpsError('failed-precondition', '배팅 시간이 아닙니다.');
-    }
-    
-    if (gameData.roundId !== roundId) {
-      throw new functions.https.HttpsError('failed-precondition', '라운드가 변경되었습니다. 새로고침 해주세요.');
-    }
-    
-    const now = Date.now();
-    if (now >= gameData.bettingEndTime) {
-      throw new functions.https.HttpsError('failed-precondition', '배팅 시간이 종료되었습니다.');
-    }
-    
-    // 이미 배팅했는지 확인
-    if (gameData.bets && gameData.bets[userId]) {
-      throw new functions.https.HttpsError('already-exists', '이미 이번 라운드에 배팅하셨습니다.');
-    }
-    
-    // 사용자 잔액 확인
-    const userRef = db.doc(`users/${userId}`);
-    const userSnap = await transaction.get(userRef);
-    
-    if (!userSnap.exists) {
-      throw new functions.https.HttpsError('not-found', '사용자 정보를 찾을 수 없습니다.');
-    }
-    
-    const userData = userSnap.data();
-    const totalCash = (userData.cash || 0) + (userData.cashGranted || 0);
-    
-    if (totalCash < amount) {
-      throw new functions.https.HttpsError('failed-precondition', '잔액이 부족합니다.');
-    }
-    
-    // 배팅 기록 추가
-    const newBets = { ...gameData.bets, [userId]: { choice, amount } };
-    const totalOddBets = gameData.totalOddBets + (choice === 'odd' ? amount : 0);
-    const totalEvenBets = gameData.totalEvenBets + (choice === 'even' ? amount : 0);
-    
-    transaction.update(gameRef, {
-      bets: newBets,
-      totalOddBets,
-      totalEvenBets
-    });
-    
-    console.log(`[OddEven] Bet placed: user=${userId}, choice=${choice}, amount=${amount}`);
-    
-    return { success: true, message: '배팅이 완료되었습니다.' };
-  });
-});
-
-// 수동으로 새 라운드 시작 (관리자용 또는 초기화용)
-exports.startOddEvenRound = onCall({
-  timeoutSeconds: 30,
-  memory: '256MiB'
-}, async (request) => {
-  const gameRef = db.doc('game/oddEven');
-  const now = Date.now();
-  
-  await startNewOddEvenRound(gameRef, now);
-  
-  return { success: true, message: '새 라운드가 시작되었습니다.' };
-});

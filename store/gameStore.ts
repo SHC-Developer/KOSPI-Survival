@@ -76,6 +76,18 @@ interface ExecutedOrder {
   price: number;
 }
 
+// 레버리지 청산 정보
+interface LiquidationInfo {
+  stockId: string;
+  stockName: string;
+  leverage: number;
+  quantity: number;
+  entryPrice: number;
+  liquidationPrice: number;
+  currentPrice: number;
+  lossAmount: number;
+}
+
 interface GameStore extends GameState {
   cashGranted: number; // 관리자 지급 금액
   transactions: TransactionRecord[];
@@ -83,6 +95,7 @@ interface GameStore extends GameState {
   pendingOrders: PendingOrder[];
   latestNews: NewsEvent | null; // 가장 최근 뉴스 (팝업용)
   executedOrders: ExecutedOrder[]; // 체결된 예약 주문 (팝업용)
+  liquidatedPositions: LiquidationInfo[]; // 청산된 레버리지 포지션 (팝업용)
   isNewsPhase: boolean; // 뉴스 페이즈 여부
   newsPhaseCountdown: number; // 뉴스 페이즈 남은 시간
   newsWarningActive: boolean; // 뉴스 경고 활성화 여부
@@ -90,8 +103,8 @@ interface GameStore extends GameState {
   marketClosingMessage: string | null; // 장 마감 메시지
   dayProgress: number; // 하루 진행률 (%)
   initialize: () => void;
-  loadFromFirebase: (cash: number, portfolio: { stockId: string; quantity: number; averagePrice: number }[], gameTick: number, cashGranted?: number) => void;
-  getDataForFirebase: () => { cash: number; cashGranted: number; portfolio: { stockId: string; quantity: number; averagePrice: number }[]; gameTick: number };
+  loadFromFirebase: (cash: number, portfolio: { stockId: string; quantity: number; averagePrice: number; leverage?: number; entryPrice?: number; liquidationPrice?: number }[], gameTick: number, cashGranted?: number) => void;
+  getDataForFirebase: () => { cash: number; cashGranted: number; portfolio: { stockId: string; quantity: number; averagePrice: number; leverage?: number; entryPrice?: number; liquidationPrice?: number }[]; gameTick: number };
   // 주가 Firebase 동기화
   getStockPricesForFirebase: () => StockPriceData;
   loadStockPricesFromFirebase: (data: StockPriceDocument) => void;
@@ -100,8 +113,10 @@ interface GameStore extends GameState {
   cancelPendingOrder: (orderId: string) => void;
   clearLatestNews: () => void;
   clearExecutedOrders: () => void;
+  clearLiquidatedPositions: () => void;
   sellAllStocks: () => void;
   setNewsEvents: (news: NewsEvent[]) => void;
+  buyStockWithLeverage: (stockId: string, quantity: number, price: number, leverage: number) => void;
 }
 
 // Box-Muller 변환을 이용한 정규분포 난수 생성
@@ -453,6 +468,7 @@ export const useGameStore = create<GameStore>()(
       pendingOrders: [],
       latestNews: null,
       executedOrders: [],
+      liquidatedPositions: [], // 청산된 레버리지 포지션
       isNewsPhase: false,
       newsPhaseCountdown: 0,
       newsWarningActive: false,
@@ -651,8 +667,57 @@ export const useGameStore = create<GameStore>()(
           (updates as any).executedOrders = executedOrders;
         }
         
+        // 레버리지 포지션 청산 체크
+        const currentPortfolio = get().portfolio;
+        const liquidatedPositions: LiquidationInfo[] = [];
+        const survivingPortfolio: typeof currentPortfolio = [];
+        
+        for (const item of currentPortfolio) {
+          const stock = updatedStocks.find(s => s.id === item.stockId);
+          if (!stock) {
+            survivingPortfolio.push(item);
+            continue;
+          }
+          
+          // 레버리지가 없거나 1x인 경우 청산 체크 불필요
+          if (!item.leverage || item.leverage <= 1) {
+            survivingPortfolio.push(item);
+            continue;
+          }
+          
+          // 레버리지 포지션의 청산가 체크
+          const entryPrice = item.entryPrice || item.averagePrice;
+          const liquidationPrice = item.liquidationPrice || (entryPrice * (1 - (1 / item.leverage)));
+          
+          if (stock.currentPrice <= liquidationPrice) {
+            // 청산! 포지션 삭제, 투자금 전액 손실
+            // 투자금(증거금) = 수량 × 평균단가
+            const investmentAmount = item.quantity * item.averagePrice;
+            liquidatedPositions.push({
+              stockId: item.stockId,
+              stockName: stock.name,
+              leverage: item.leverage,
+              quantity: item.quantity,
+              entryPrice: entryPrice,
+              liquidationPrice: liquidationPrice,
+              currentPrice: stock.currentPrice,
+              lossAmount: investmentAmount // 투자금 전액 손실
+            });
+            // 청산된 포지션은 survivingPortfolio에 추가하지 않음
+          } else {
+            survivingPortfolio.push(item);
+          }
+        }
+        
+        // 청산된 포지션이 있으면 포트폴리오 업데이트
+        if (liquidatedPositions.length > 0) {
+          updates.portfolio = survivingPortfolio;
+          (updates as any).liquidatedPositions = liquidatedPositions;
+          console.log('[GameStore] Liquidated positions:', liquidatedPositions);
+        }
+        
         set(updates);
-        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay, executedOrders: executedOrders.length });
+        console.log('[GameStore] Stock prices loaded from Firebase', { gameTick: data.gameTick, currentDay: data.currentDay, executedOrders: executedOrders.length, liquidations: liquidatedPositions.length });
       },
 
       updateGameTick: (gameTick: number, currentDay: number) => {
@@ -740,25 +805,60 @@ export const useGameStore = create<GameStore>()(
         }
       },
 
-      sellStock: (stockId, quantity, price) => {
+      sellStock: (stockId, quantity, price, leverage?: number) => {
         const { stocks, portfolio, cash, transactions, gameTick, currentDay, realizedPnL } = get();
         const stock = stocks.find(s => s.id === stockId);
-        const holding = portfolio.find(p => p.stockId === stockId);
+        
+        // 레버리지 지정 시 해당 레버리지 포지션, 아니면 일반 포지션(leverage=1 또는 undefined)
+        const holding = leverage && leverage > 1
+          ? portfolio.find(p => p.stockId === stockId && p.leverage === leverage)
+          : portfolio.find(p => p.stockId === stockId && (!p.leverage || p.leverage === 1));
         
         if (!stock || !holding || holding.quantity < quantity || quantity <= 0) return;
         
         // 상장폐지 또는 거래정지 종목은 매도 불가
         if (stock.isDelisted || stock.tradingHalted) return;
 
-        const saleAmount = price * quantity;
-        const fee = Math.round(saleAmount * TRANSACTION_FEE_RATE); // 수수료 0.1% (반올림)
-        const totalProceeds = saleAmount - fee;
-        const costBasis = holding.averagePrice * quantity;
-        const profit = totalProceeds - costBasis;
+        const holdingLeverage = holding.leverage || 1;
+        const isLeveraged = holdingLeverage > 1;
+        const entryPrice = holding.entryPrice || holding.averagePrice;
         
+        let totalProceeds: number;
+        let profit: number;
+        let fee: number;
+        
+        if (isLeveraged) {
+          // 레버리지 포지션 매도
+          // 투자금(증거금) = 수량 × 평균단가
+          const investmentAmount = entryPrice * quantity;
+          // 레버리지 적용 수익률 계산: (현재가 - 진입가) / 진입가 × 레버리지
+          const baseReturn = (price - entryPrice) / entryPrice;
+          const leveragedReturn = baseReturn * holdingLeverage;
+          // 평가금액 = 투자금 × (1 + 레버리지 수익률)
+          // 예: 100만원 투자, 50배 레버리지, 1% 상승 → 100만원 × (1 + 0.5) = 150만원
+          const evaluatedAmount = investmentAmount * (1 + leveragedReturn);
+          // 음수가 되지 않도록 (청산 전에 매도하는 경우)
+          const proceedsBeforeFee = Math.max(0, evaluatedAmount);
+          fee = Math.round(proceedsBeforeFee * TRANSACTION_FEE_RATE);
+          totalProceeds = proceedsBeforeFee - fee;
+          profit = totalProceeds - investmentAmount;
+        } else {
+          // 일반 매도
+          const saleAmount = price * quantity;
+          fee = Math.round(saleAmount * TRANSACTION_FEE_RATE);
+          totalProceeds = saleAmount - fee;
+          const costBasis = holding.averagePrice * quantity;
+          profit = totalProceeds - costBasis;
+        }
+        
+        // 포트폴리오 업데이트 (레버리지 포지션 구분)
         const newPortfolio = holding.quantity === quantity
-          ? portfolio.filter(p => p.stockId !== stockId)
-          : portfolio.map(p => p.stockId === stockId ? { ...p, quantity: p.quantity - quantity } : p);
+          ? portfolio.filter(p => !(p.stockId === stockId && (p.leverage || 1) === holdingLeverage))
+          : portfolio.map(p => 
+              (p.stockId === stockId && (p.leverage || 1) === holdingLeverage)
+                ? { ...p, quantity: p.quantity - quantity } 
+                : p
+            );
 
         set({
           cash: cash + totalProceeds,
@@ -770,10 +870,10 @@ export const useGameStore = create<GameStore>()(
               time: gameTick,
               day: currentDay,
               type: TransactionType.SELL,
-              stockName: stock.name,
+              stockName: isLeveraged ? `${stock.name} (${holdingLeverage}x)` : stock.name,
               quantity,
               price,
-              total: saleAmount,
+              total: Math.round(totalProceeds),
               fee
             },
             ...transactions
@@ -1039,6 +1139,96 @@ export const useGameStore = create<GameStore>()(
         set({ executedOrders: [] });
       },
       
+      // 청산된 레버리지 포지션 클리어
+      clearLiquidatedPositions: () => {
+        set({ liquidatedPositions: [] });
+      },
+      
+      // 레버리지 매수
+      // 레버리지 로직: 투자금(증거금) × 레버리지 = 포지션 가치
+      // 예: 100만원 투자, 50배 레버리지 → 5000만원 포지션
+      // 1% 상승 시: 수익률 50%, 평가손익 50만원, 평가금액 150만원
+      buyStockWithLeverage: (stockId, quantity, price, leverage) => {
+        const { stocks, cash, portfolio, transactions, gameTick, currentDay } = get();
+        const stock = stocks.find(s => s.id === stockId);
+        if (!stock || quantity <= 0 || leverage < 1) return;
+        
+        // 상장폐지 또는 거래정지 종목은 매수 불가
+        if (stock.isDelisted || stock.tradingHalted) return;
+
+        // 투자금(증거금) = 수량 × 단가 (현금에서 차감되는 금액)
+        const investmentAmount = price * quantity;
+        const fee = Math.round(investmentAmount * TRANSACTION_FEE_RATE);
+        const totalCost = investmentAmount + fee;
+        
+        // 청산가 계산: 진입가 * (1 - 1/레버리지)
+        // 예: 50배 레버리지, 10000원 진입 -> 청산가 = 10000 * (1 - 0.02) = 9800원
+        // 주가가 2% 하락하면 청산 (투자금 전액 손실)
+        const liquidationPrice = Math.round(price * (1 - (1 / leverage)));
+        
+        if (cash >= totalCost) {
+          // 레버리지 포지션은 별도로 관리 (기존 포지션과 합치지 않음)
+          // 같은 종목이라도 레버리지가 다르면 별도 포지션
+          const existingLeverageHolding = portfolio.find(
+            p => p.stockId === stockId && p.leverage === leverage
+          );
+          
+          let newPortfolio;
+          
+          if (existingLeverageHolding) {
+            // 같은 레버리지의 포지션이 있으면 합침
+            // 기존 투자금 + 새 투자금
+            const existingInvestment = existingLeverageHolding.quantity * existingLeverageHolding.averagePrice;
+            const totalInvestment = existingInvestment + investmentAmount;
+            const newQuantity = existingLeverageHolding.quantity + quantity;
+            const newAveragePrice = Math.floor(totalInvestment / newQuantity);
+            // 청산가는 새 평균 진입가 기준으로 재계산
+            const newLiquidationPrice = Math.round(newAveragePrice * (1 - (1 / leverage)));
+            
+            newPortfolio = portfolio.map(p => 
+              (p.stockId === stockId && p.leverage === leverage)
+                ? { 
+                    ...p, 
+                    quantity: newQuantity, 
+                    averagePrice: newAveragePrice,
+                    entryPrice: newAveragePrice,
+                    liquidationPrice: newLiquidationPrice
+                  } 
+                : p
+            );
+          } else {
+            // 새 레버리지 포지션 추가
+            newPortfolio = [...portfolio, { 
+              stockId, 
+              quantity, 
+              averagePrice: price,
+              leverage,
+              entryPrice: price,
+              liquidationPrice
+            }];
+          }
+
+          set({
+            cash: cash - totalCost,
+            portfolio: newPortfolio,
+            transactions: [
+              {
+                id: `tx-${Date.now()}`,
+                time: gameTick,
+                day: currentDay,
+                type: TransactionType.BUY,
+                stockName: `${stock.name} (${leverage}x)`,
+                quantity,
+                price,
+                total: investmentAmount, // 투자금(증거금)
+                fee
+              },
+              ...transactions
+            ].slice(0, 100)
+          });
+        }
+      },
+      
       // 뉴스 이벤트 설정 (Firebase에서 받은 뉴스)
       setNewsEvents: (newsEvents: NewsEvent[]) => {
         const { news } = get();
@@ -1057,7 +1247,8 @@ export const useGameStore = create<GameStore>()(
           const stock = stocks.find(s => s.id === item.stockId);
           // 상장폐지 또는 거래정지 종목은 매도 불가
           if (stock && !stock.isDelisted && !stock.tradingHalted) {
-            sellStock(item.stockId, item.quantity, stock.currentPrice);
+            // 레버리지 포지션도 올바르게 매도
+            sellStock(item.stockId, item.quantity, stock.currentPrice, item.leverage);
           }
         }
       }

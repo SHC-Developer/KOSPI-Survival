@@ -23,6 +23,9 @@ const roundToTickSize = (price: number): number => {
   return Math.round(price / tickSize) * tickSize;
 };
 
+// 레버리지 배율 옵션
+const LEVERAGE_OPTIONS = [1, 2, 5, 10, 25, 50];
+
 const OrderPage: React.FC = () => {
   const { 
     stocks, 
@@ -32,6 +35,7 @@ const OrderPage: React.FC = () => {
     portfolio, 
     buyStock, 
     sellStock,
+    buyStockWithLeverage,
     addPendingOrder,
     pendingOrders,
     cancelPendingOrder,
@@ -46,6 +50,7 @@ const OrderPage: React.FC = () => {
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market'); // 시장가 vs 예약
   const [quantity, setQuantity] = useState<number>(0);
   const [limitPrice, setLimitPrice] = useState<number>(0); // 예약 주문 가격
+  const [leverage, setLeverage] = useState<number>(1); // 레버리지 배율 (1=일반)
   
   // 이전 종목 ID를 추적하여 종목 변경 시에만 가격 초기화
   const prevStockIdRef = useRef<string | null>(null);
@@ -101,14 +106,29 @@ const OrderPage: React.FC = () => {
 
   // 시장가 주문 시 현재가, 예약 주문 시 지정 가격
   const effectivePrice = orderType === 'market' ? stock.currentPrice : limitPrice;
-  const maxBuy = effectivePrice > 0 ? Math.floor(cash / (effectivePrice * (1 + TRANSACTION_FEE_RATE))) : 0;
+  
+  // 최대 매수 수량 계산 (레버리지 상관없이 주문금액이 증거금)
+  const maxBuy = effectivePrice > 0 
+    ? Math.floor(cash / (effectivePrice * (1 + TRANSACTION_FEE_RATE))) 
+    : 0;
   const maxSell = holdingQty;
-  const orderAmount = quantity * effectivePrice;
+  
+  // 주문 금액 = 증거금 (레버리지 상관없이 이 금액이 현금에서 차감됨)
+  const orderAmount = quantity * effectivePrice; // 증거금 = 수량 × 단가
+  // 레버리지 적용 시 포지션 가치 = 증거금 × 레버리지
+  const positionValue = leverage > 1 ? orderAmount * leverage : orderAmount;
   const fee = Math.round(orderAmount * TRANSACTION_FEE_RATE);
   const totalAmount = mode === 'BUY' ? orderAmount + fee : orderAmount - fee;
   
+  // 청산가 계산 (레버리지 매수 시)
+  // 증거금 전액 손실 = 포지션 가치 100%/레버리지 하락 시
+  // 예: 50배 레버리지 → 2% 하락 시 청산
+  const liquidationPrice = leverage > 1 
+    ? Math.round(effectivePrice * (1 - (1 / leverage)))
+    : 0;
+  
   const canMarketOrder = quantity > 0 && (
-    (mode === 'BUY' && (orderAmount + fee) <= cash) ||
+    (mode === 'BUY' && totalAmount <= cash) ||
     (mode === 'SELL' && quantity <= holdingQty)
   );
   
@@ -116,6 +136,13 @@ const OrderPage: React.FC = () => {
     (mode === 'BUY') || // 매수 예약은 항상 가능 (체결 시 현금 체크)
     (mode === 'SELL' && quantity <= holdingQty)
   );
+  
+  // 모드 변경 시 레버리지 초기화
+  React.useEffect(() => {
+    if (mode === 'SELL') {
+      setLeverage(1);
+    }
+  }, [mode]);
 
   // 시장가 즉시 주문
   const handleMarketOrder = () => {
@@ -127,12 +154,19 @@ const OrderPage: React.FC = () => {
     }
     
     if (mode === 'BUY') {
-      buyStock(stock.id, quantity, stock.currentPrice); // 현재 시장가로 매수
+      if (leverage > 1) {
+        // 레버리지 매수
+        buyStockWithLeverage(stock.id, quantity, stock.currentPrice, leverage);
+      } else {
+        // 일반 매수
+        buyStock(stock.id, quantity, stock.currentPrice);
+      }
     } else {
       sellStock(stock.id, quantity, stock.currentPrice); // 현재 시장가로 매도
     }
     
     setQuantity(0);
+    setLeverage(1); // 주문 후 레버리지 초기화
     setPage('portfolio');
   };
   
@@ -391,10 +425,81 @@ const OrderPage: React.FC = () => {
           </div>
         </div>
 
+        {/* 레버리지 선택 (매수 + 시장가 주문 시에만) */}
+        {mode === 'BUY' && orderType === 'market' && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-gray-400">레버리지 (신용거래)</label>
+              {leverage > 1 && (
+                <span className="text-xs text-yellow-500">⚠️ 청산 위험</span>
+              )}
+            </div>
+            <div className="grid grid-cols-6 gap-1">
+              {LEVERAGE_OPTIONS.map((lev) => (
+                <button
+                  key={lev}
+                  onClick={() => setLeverage(lev)}
+                  className={`py-2.5 rounded-lg font-bold text-sm transition-all ${
+                    leverage === lev
+                      ? lev === 1 
+                        ? 'bg-gray-600 text-white ring-2 ring-gray-400'
+                        : 'bg-gradient-to-r from-yellow-600 to-orange-600 text-white ring-2 ring-yellow-400'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                  }`}
+                >
+                  {lev === 1 ? '없음' : `${lev}x`}
+                </button>
+              ))}
+            </div>
+            
+            {/* 레버리지 설명 및 청산가 표시 */}
+            {leverage > 1 && (
+              <div className="bg-yellow-900/30 border border-yellow-800 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2 text-yellow-400 text-sm font-medium">
+                  <span>⚡ {leverage}배 레버리지</span>
+                </div>
+                <div className="text-xs text-gray-300 space-y-1">
+                  <div className="flex justify-between">
+                    <span>투자금 (증거금)</span>
+                    <span className="text-white font-medium">
+                      <KRW value={orderAmount} />원
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>포지션 가치 (×{leverage})</span>
+                    <span className="text-yellow-400 font-bold">
+                      <KRW value={positionValue} />원
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-red-400">
+                    <span>청산가</span>
+                    <span className="font-bold">
+                      <KRW value={liquidationPrice} />원 (-{(100/leverage).toFixed(1)}%)
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-yellow-500/80 mt-2">
+                  💀 주가가 청산가 이하로 떨어지면 투자금 전액을 잃습니다!
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 총 주문 금액 */}
         <div className="bg-gray-900 rounded-lg p-4 space-y-2">
+          {mode === 'BUY' && leverage > 1 && (
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400">포지션 가치 (×{leverage})</span>
+              <span className="text-yellow-400 font-medium">
+                <KRW value={positionValue} /> 원
+              </span>
+            </div>
+          )}
           <div className="flex justify-between items-center">
-            <span className="text-gray-400">주문 금액</span>
+            <span className="text-gray-400">
+              {mode === 'BUY' && leverage > 1 ? '투자금 (증거금)' : '주문 금액'}
+            </span>
             <span className="text-white font-medium">
               <KRW value={orderAmount} /> 원
             </span>
@@ -409,7 +514,7 @@ const OrderPage: React.FC = () => {
             <span className="text-gray-400 font-medium">
               {mode === 'BUY' ? '총 필요 금액' : '예상 수령액'}
             </span>
-            <span className={`text-2xl font-bold ${mode === 'BUY' ? 'text-red-500' : 'text-blue-500'}`}>
+            <span className={`text-2xl font-bold ${mode === 'BUY' ? (leverage > 1 ? 'text-yellow-500' : 'text-red-500') : 'text-blue-500'}`}>
               <KRW value={totalAmount} />
               <span className="text-sm text-gray-500 ml-1">원</span>
             </span>
@@ -466,11 +571,17 @@ const OrderPage: React.FC = () => {
             disabled={!canMarketOrder || marketStatus === 'CLOSED'}
             className={`w-full py-4 rounded-lg font-bold text-lg transition-all active:scale-98 ${
               mode === 'BUY'
-                ? 'bg-red-600 hover:bg-red-500 text-white'
+                ? leverage > 1 
+                  ? 'bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white'
+                  : 'bg-red-600 hover:bg-red-500 text-white'
                 : 'bg-blue-600 hover:bg-blue-500 text-white'
             } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
-            {mode === 'BUY' ? '시장가 매수' : '시장가 매도'}
+            {mode === 'BUY' 
+              ? leverage > 1 
+                ? `${leverage}x 레버리지 매수` 
+                : '시장가 매수' 
+              : '시장가 매도'}
           </button>
         ) : (
           <button

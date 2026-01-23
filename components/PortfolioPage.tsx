@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { KRW, Rate } from './Formatters';
 
@@ -6,18 +6,53 @@ import { KRW, Rate } from './Formatters';
 const TRANSACTION_FEE_RATE = 0.001;
 
 const PortfolioPage: React.FC = () => {
-  const { portfolio, stocks, cash, initialCash, realizedPnL, selectStock, transactions, sellAllStocks, marketStatus, gameTick } = useGameStore();
+  const { portfolio, stocks, cash, initialCash, realizedPnL, selectStock, transactions, sellAllStocks, marketStatus, gameTick, liquidatedPositions, clearLiquidatedPositions } = useGameStore();
+  
+  // 청산된 포지션이 있으면 알림 표시
+  useEffect(() => {
+    if (liquidatedPositions.length > 0) {
+      const messages = liquidatedPositions.map(liq => 
+        `💀 ${liq.stockName} (${liq.leverage}x)\n` +
+        `청산가: ${liq.liquidationPrice.toLocaleString()}원\n` +
+        `현재가: ${liq.currentPrice.toLocaleString()}원\n` +
+        `손실: ${liq.lossAmount.toLocaleString()}원`
+      );
+      alert(`⚠️ 레버리지 포지션 청산!\n\n${messages.join('\n\n')}`);
+      clearLiquidatedPositions();
+    }
+  }, [liquidatedPositions, clearLiquidatedPositions]);
 
   // 계산 (stocks와 gameTick이 변경될 때마다 재계산 - 주가 실시간 반영)
+  // 레버리지 포지션: 투자금(증거금) × 레버리지 = 포지션 가치
+  // 평가금액 = 투자금 × (1 + 레버리지 수익률)
   const totalStockValue = useMemo(() => {
     return portfolio.reduce((sum, item) => {
       const stock = stocks.find(s => s.id === item.stockId);
-      return sum + (stock ? stock.currentPrice * item.quantity : 0);
+      if (!stock) return sum;
+      
+      const leverage = item.leverage || 1;
+      const entryPrice = item.entryPrice || item.averagePrice;
+      // 투자금(증거금) = 수량 × 평균단가
+      const investmentAmount = item.averagePrice * item.quantity;
+      
+      if (leverage > 1) {
+        // 레버리지 포지션: 평가금액 = 투자금 × (1 + 레버리지 수익률)
+        // 예: 100만원 투자, 50배 레버리지, 1% 상승 → 100만원 × (1 + 0.5) = 150만원
+        const baseReturn = (stock.currentPrice - entryPrice) / entryPrice;
+        const leveragedReturn = baseReturn * leverage;
+        const evaluatedValue = investmentAmount * (1 + leveragedReturn);
+        return sum + Math.max(0, evaluatedValue); // 청산되지 않은 경우에만
+      } else {
+        // 일반 포지션: 평가금액 = 현재가 × 수량
+        return sum + stock.currentPrice * item.quantity;
+      }
     }, 0);
   }, [portfolio, stocks, gameTick]); // gameTick이 변경되면 주가도 변경된 것으로 간주
 
+  // 총 투자금 (매입금액) - 레버리지 포지션도 투자금 전액이 매입금액
   const totalPurchaseAmount = useMemo(() => {
     return portfolio.reduce((sum, item) => {
+      // 투자금 = 수량 × 평균단가 (레버리지 상관없이)
       return sum + item.averagePrice * item.quantity;
     }, 0);
   }, [portfolio]);
@@ -148,29 +183,64 @@ const PortfolioPage: React.FC = () => {
               <p className="text-gray-600 text-sm mt-2">관심종목에서 매수해보세요</p>
             </div>
           ) : (
-            portfolio.map((item) => {
+            portfolio.map((item, index) => {
               const stock = stocks.find(s => s.id === item.stockId);
               if (!stock) return null;
 
-              const valuation = stock.currentPrice * item.quantity;
-              const costBasis = item.averagePrice * item.quantity;
-              const profit = valuation - costBasis;
-              const profitRate = costBasis === 0 ? 0 : (profit / costBasis) * 100;
+              // 투자금(증거금) = 수량 × 평균단가
+              const investmentAmount = item.averagePrice * item.quantity;
+              
+              // 레버리지 포지션의 경우 레버리지 적용된 수익률 계산
+              const leverage = item.leverage || 1;
+              const isLeveraged = leverage > 1;
+              const entryPrice = item.entryPrice || item.averagePrice;
+              const liquidationPrice = item.liquidationPrice || (isLeveraged ? Math.round(entryPrice * (1 - 1/leverage)) : 0);
+              
+              // 레버리지 적용 수익률: (현재가 - 진입가) / 진입가 × 레버리지 × 100
+              const baseReturn = (stock.currentPrice - entryPrice) / entryPrice;
+              const leveragedReturn = baseReturn * leverage * 100;
+              
+              // 레버리지 포지션의 평가금액: 투자금 × (1 + 레버리지 수익률)
+              // 예: 100만원 투자, 50배 레버리지, 1% 상승 → 100만원 × (1 + 0.5) = 150만원
+              const valuation = isLeveraged 
+                ? Math.max(0, investmentAmount * (1 + leveragedReturn / 100))
+                : stock.currentPrice * item.quantity;
+              
+              const profit = valuation - investmentAmount;
+              const profitRate = isLeveraged ? leveragedReturn : (investmentAmount === 0 ? 0 : (profit / investmentAmount) * 100);
               const isProfit = profit >= 0;
+              
+              // 청산 위험도 계산 (청산가까지 남은 비율)
+              const liquidationRisk = isLeveraged 
+                ? ((stock.currentPrice - liquidationPrice) / (entryPrice - liquidationPrice)) * 100
+                : 100;
 
               return (
                 <div
-                  key={item.stockId}
+                  key={`${item.stockId}-${leverage}-${index}`}
                   onClick={() => selectStock(item.stockId)}
-                  className="py-4 border-b border-gray-800/50 cursor-pointer hover:bg-gray-900/50 active:bg-gray-800/50 -mx-4 px-4"
+                  className={`py-4 border-b cursor-pointer hover:bg-gray-900/50 active:bg-gray-800/50 -mx-4 px-4 ${
+                    isLeveraged 
+                      ? liquidationRisk < 30 
+                        ? 'border-red-800 bg-red-900/20' 
+                        : 'border-yellow-800/50'
+                      : 'border-gray-800/50'
+                  }`}
                 >
                   {/* 첫 번째 줄 */}
                   <div className="grid grid-cols-12 items-center">
                     <div className="col-span-4">
-                      <p className="font-bold text-white">{stock.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-bold text-white">{stock.name}</p>
+                        {isLeveraged && (
+                          <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-yellow-600 text-black">
+                            {leverage}x
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className={`col-span-4 text-right font-bold ${isProfit ? 'text-red-500' : 'text-blue-500'}`}>
-                      {isProfit ? '+' : ''}<KRW value={profit} />
+                      {isProfit ? '+' : ''}<KRW value={Math.round(profit)} />
                     </div>
                     <div className="col-span-4 text-right text-white font-medium">
                       <KRW value={valuation} />
@@ -184,11 +254,39 @@ const PortfolioPage: React.FC = () => {
                     </div>
                     <div className={`col-span-4 text-right ${isProfit ? 'text-red-500' : 'text-blue-500'}`}>
                       {isProfit ? '+' : ''}{profitRate.toFixed(2)}%
+                      {isLeveraged && <span className="text-yellow-500 ml-1">(x{leverage})</span>}
                     </div>
                     <div className="col-span-4 text-right text-gray-500">
                       <KRW value={item.averagePrice} />
                     </div>
                   </div>
+                  
+                  {/* 레버리지 포지션 추가 정보 */}
+                  {isLeveraged && (
+                    <div className="mt-2 pt-2 border-t border-gray-800">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-gray-500">
+                          투자금: <KRW value={Math.round(investmentAmount)} />원
+                        </span>
+                        <span className={`font-medium ${liquidationRisk < 30 ? 'text-red-400' : 'text-yellow-500'}`}>
+                          청산가: <KRW value={liquidationPrice} />원
+                          {liquidationRisk < 50 && (
+                            <span className="ml-1 text-red-400">⚠️ {liquidationRisk.toFixed(0)}%</span>
+                          )}
+                        </span>
+                      </div>
+                      {/* 청산 위험도 바 */}
+                      <div className="mt-1.5 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full transition-all ${
+                            liquidationRisk < 30 ? 'bg-red-500' : 
+                            liquidationRisk < 50 ? 'bg-yellow-500' : 'bg-green-500'
+                          }`}
+                          style={{ width: `${Math.min(100, Math.max(0, liquidationRisk))}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })

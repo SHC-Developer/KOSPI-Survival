@@ -68,6 +68,9 @@ export interface PortfolioItem {
   stockId: string;
   quantity: number;
   averagePrice: number;
+  leverage?: number; // 레버리지 배율 (1=일반, 2/5/10/25/50=레버리지)
+  entryPrice?: number; // 레버리지 진입가 (청산가 계산용)
+  liquidationPrice?: number; // 청산가
 }
 
 export interface NewsEvent {
@@ -86,7 +89,7 @@ export interface NewsEvent {
 export type MarketStatus = 'OPEN' | 'CLOSED';
 
 // 페이지 타입
-export type PageType = 'watchlist' | 'price' | 'order' | 'portfolio' | 'ranking' | 'oddeven';
+export type PageType = 'watchlist' | 'price' | 'order' | 'portfolio' | 'ranking';
 
 export interface GameState {
   cash: number;
@@ -111,7 +114,7 @@ export interface GameState {
   // Actions
   tick: () => void;
   buyStock: (stockId: string, quantity: number, price: number) => void;
-  sellStock: (stockId: string, quantity: number, price: number) => void;
+  sellStock: (stockId: string, quantity: number, price: number, leverage?: number) => void;
   resetGame: () => void;
   togglePlay: () => void;
   selectStock: (id: string) => void;
