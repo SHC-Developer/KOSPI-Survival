@@ -709,11 +709,17 @@ export const useGameStore = create<GameStore>()(
           }
         }
         
-        // 청산된 포지션이 있으면 포트폴리오 업데이트
+        // 청산된 포지션이 있으면 포트폴리오 업데이트 및 손실 반영
         if (liquidatedPositions.length > 0) {
+          // 총 손실금액 계산
+          const totalLoss = liquidatedPositions.reduce((sum, pos) => sum + pos.lossAmount, 0);
+          const currentRealizedPnL = get().realizedPnL;
+          
           updates.portfolio = survivingPortfolio;
           (updates as any).liquidatedPositions = liquidatedPositions;
-          console.log('[GameStore] Liquidated positions:', liquidatedPositions);
+          (updates as any).realizedPnL = currentRealizedPnL - totalLoss; // 손실 반영
+          
+          console.log('[GameStore] Liquidated positions:', liquidatedPositions, 'Total loss:', totalLoss);
         }
         
         set(updates);
